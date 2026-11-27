@@ -19,6 +19,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
+import kotlin.math.min
 
 data class ExportResult(
     val success: Boolean,
@@ -34,7 +35,10 @@ object ExportManager {
         document: CanvasDocument,
         format: ExportFormat,
         resolution: ExportResolution,
-        transparentBackground: Boolean
+        transparentBackground: Boolean,
+        customWidthPx: Int? = null,
+        customHeightPx: Int? = null,
+        stretchToFit: Boolean = false
     ): ExportResult = withContext(Dispatchers.IO) {
         runCatching {
             val safeName = document.name.replace(Regex("[^a-zA-Z0-9_\\- ]"), "").trim().ifEmpty { "ArfinDesign" }
@@ -44,8 +48,18 @@ object ExportManager {
             val cacheDir = File(context.cacheDir, "exports").apply { mkdirs() }
             val cacheFile = File(cacheDir, fileName)
 
-            FileOutputStream(cacheFile).use { out ->
-                writeDocumentBytes(context, document, format, resolution, transparentBackground, out)
+            val exportedDims = FileOutputStream(cacheFile).use { out ->
+                writeDocumentBytes(
+                    context = context,
+                    document = document,
+                    format = format,
+                    resolution = resolution,
+                    transparentBackground = transparentBackground,
+                    customWidthPx = customWidthPx,
+                    customHeightPx = customHeightPx,
+                    stretchToFit = stretchToFit,
+                    out = out
+                )
             }
 
             // Save to Phone Gallery (Images) or Downloads (SVG/VECTOR/PDF) via MediaStore (zero broad permission on Android 10+)
@@ -87,7 +101,8 @@ object ExportManager {
                 cacheFile
             )
 
-            val locationMsg = if (isImage) "Saved to Gallery (Pictures/ArfinIllustrator)" else "Saved to Downloads/ArfinIllustrator"
+            val dimSuffix = if (exportedDims != null) " (${exportedDims.first}×${exportedDims.second}px)" else ""
+            val locationMsg = if (isImage) "Saved to Gallery (Pictures/ArfinIllustrator)$dimSuffix" else "Saved to Downloads/ArfinIllustrator$dimSuffix"
             ExportResult(true, "$locationMsg • $fileName", shareUri, fileName)
         }.getOrElse { e ->
             ExportResult(false, e.message ?: "Export failed")
@@ -99,7 +114,10 @@ object ExportManager {
         document: CanvasDocument,
         format: ExportFormat = ExportFormat.PNG,
         resolution: ExportResolution = ExportResolution.RES_4K,
-        transparentBackground: Boolean = false
+        transparentBackground: Boolean = false,
+        customWidthPx: Int? = null,
+        customHeightPx: Int? = null,
+        stretchToFit: Boolean = false
     ): ExportResult = withContext(Dispatchers.IO) {
         runCatching {
             val safeName = document.name.replace(Regex("[^a-zA-Z0-9_\\- ]"), "").trim().ifEmpty { "ArfinDesign" }
@@ -107,7 +125,17 @@ object ExportManager {
             val cacheDir = File(context.cacheDir, "exports").apply { mkdirs() }
             val cacheFile = File(cacheDir, fileName)
             FileOutputStream(cacheFile).use { out ->
-                writeDocumentBytes(context, document, format, resolution, transparentBackground, out)
+                writeDocumentBytes(
+                    context = context,
+                    document = document,
+                    format = format,
+                    resolution = resolution,
+                    transparentBackground = transparentBackground,
+                    customWidthPx = customWidthPx,
+                    customHeightPx = customHeightPx,
+                    stretchToFit = stretchToFit,
+                    out = out
+                )
             }
             val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", cacheFile)
             ExportResult(true, "Ready to share", uri, fileName)
@@ -141,27 +169,58 @@ object ExportManager {
         }
     }
 
+    private fun renderTargetBitmap(
+        context: Context,
+        document: CanvasDocument,
+        resolution: ExportResolution,
+        transparentBackground: Boolean,
+        customWidthPx: Int?,
+        customHeightPx: Int?,
+        stretchToFit: Boolean
+    ): Bitmap {
+        return if (customWidthPx != null && customHeightPx != null && customWidthPx > 0 && customHeightPx > 0) {
+            CanvasRenderer.renderCustomResolutionBitmap(
+                context = context,
+                doc = document,
+                customWidth = customWidthPx,
+                customHeight = customHeightPx,
+                transparentBackground = transparentBackground,
+                stretchToFit = stretchToFit
+            )
+        } else {
+            CanvasRenderer.renderExportBitmap(context, document, resolution, transparentBackground)
+        }
+    }
+
     private fun writeDocumentBytes(
         context: Context,
         document: CanvasDocument,
         format: ExportFormat,
         resolution: ExportResolution,
         transparentBackground: Boolean,
+        customWidthPx: Int?,
+        customHeightPx: Int?,
+        stretchToFit: Boolean,
         out: OutputStream
-    ) {
-        when (format) {
+    ): Pair<Int, Int>? {
+        return when (format) {
             ExportFormat.PNG -> {
-                val bmp = CanvasRenderer.renderExportBitmap(context, document, resolution, transparentBackground)
+                val bmp = renderTargetBitmap(context, document, resolution, transparentBackground, customWidthPx, customHeightPx, stretchToFit)
+                val dims = bmp.width to bmp.height
                 bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
                 bmp.recycle()
+                dims
             }
             ExportFormat.JPG -> {
-                val bmp = CanvasRenderer.renderExportBitmap(context, document, resolution, transparentBackground = false)
+                val bmp = renderTargetBitmap(context, document, resolution, false, customWidthPx, customHeightPx, stretchToFit)
+                val dims = bmp.width to bmp.height
                 bmp.compress(Bitmap.CompressFormat.JPEG, 96, out)
                 bmp.recycle()
+                dims
             }
             ExportFormat.WEBP -> {
-                val bmp = CanvasRenderer.renderExportBitmap(context, document, resolution, transparentBackground)
+                val bmp = renderTargetBitmap(context, document, resolution, transparentBackground, customWidthPx, customHeightPx, stretchToFit)
+                val dims = bmp.width to bmp.height
                 val compressFmt = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                     Bitmap.CompressFormat.WEBP_LOSSLESS
                 } else {
@@ -170,27 +229,44 @@ object ExportManager {
                 }
                 bmp.compress(compressFmt, 95, out)
                 bmp.recycle()
+                dims
             }
             ExportFormat.SVG -> {
                 val svg = SvgExporter.toSvg(document, transparentBackground)
                 out.write(svg.toByteArray(Charsets.UTF_8))
+                null
             }
             ExportFormat.VECTOR -> {
                 val json = DocumentSerializer.toJson(document)
                 out.write(json.toByteArray(Charsets.UTF_8))
+                null
             }
             ExportFormat.PDF -> {
+                val pageW = (customWidthPx ?: document.targetExportWidth).coerceIn(50, 20000)
+                val pageH = (customHeightPx ?: document.targetExportHeight).coerceIn(50, 20000)
                 val pdf = PdfDocument()
-                val pageInfo = PdfDocument.PageInfo.Builder(
-                    document.artboardWidth,
-                    document.artboardHeight,
-                    1
-                ).create()
+                val pageInfo = PdfDocument.PageInfo.Builder(pageW, pageH, 1).create()
                 val page = pdf.startPage(pageInfo)
-                CanvasRenderer.renderDocument(context, page.canvas, document, 1f, 1f, transparentBackground = false)
+                if (stretchToFit) {
+                    val sx = pageW.toFloat() / document.artboardWidth.toFloat()
+                    val sy = pageH.toFloat() / document.artboardHeight.toFloat()
+                    CanvasRenderer.renderDocument(context, page.canvas, document, sx, sy, transparentBackground = false)
+                } else {
+                    val fit = min(
+                        pageW.toFloat() / document.artboardWidth.toFloat(),
+                        pageH.toFloat() / document.artboardHeight.toFloat()
+                    )
+                    val ox = (pageW - document.artboardWidth * fit) / 2f
+                    val oy = (pageH - document.artboardHeight * fit) / 2f
+                    page.canvas.save()
+                    page.canvas.translate(ox, oy)
+                    CanvasRenderer.renderDocument(context, page.canvas, document, fit, fit, transparentBackground = false)
+                    page.canvas.restore()
+                }
                 pdf.finishPage(page)
                 pdf.writeTo(out)
                 pdf.close()
+                pageW to pageH
             }
         }
     }

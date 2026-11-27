@@ -369,6 +369,18 @@ object CanvasRenderer {
         return bmp
     }
 
+    fun resolveSafeExportDimensions(targetWidth: Int, targetHeight: Int): Pair<Int, Int> {
+        var w = targetWidth.coerceIn(50, 20000)
+        var h = targetHeight.coerceIn(50, 20000)
+        val maxPixels = 8192L * 4608L // ~37.7MP safe ceiling
+        if (w.toLong() * h.toLong() > maxPixels) {
+            val factor = kotlin.math.sqrt(maxPixels.toDouble() / (w.toLong() * h.toLong()).toDouble()).toFloat()
+            w = max(1, (w * factor).toInt())
+            h = max(1, (h * factor).toInt())
+        }
+        return w to h
+    }
+
     fun renderExportBitmap(
         context: Context,
         doc: CanvasDocument,
@@ -383,15 +395,10 @@ object CanvasRenderer {
             resolution.multiplierOrTargetMax.toFloat()
         }
 
-        // Guard against extreme OOM on huge feet banners while delivering maximum crisp output
-        var w = max(1, (baseW * targetScale).toInt())
-        var h = max(1, (baseH * targetScale).toInt())
-        val maxPixels = 7680L * 4320L // ~33MP cap
-        if (w.toLong() * h.toLong() > maxPixels) {
-            val factor = kotlin.math.sqrt(maxPixels.toDouble() / (w.toLong() * h.toLong()).toDouble()).toFloat()
-            w = max(1, (w * factor).toInt())
-            h = max(1, (h * factor).toInt())
-        }
+        val (w, h) = resolveSafeExportDimensions(
+            targetWidth = max(1, (baseW * targetScale).toInt()),
+            targetHeight = max(1, (baseH * targetScale).toInt())
+        )
 
         val bmp = try {
             Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
@@ -405,6 +412,56 @@ object CanvasRenderer {
 
         val canvas = Canvas(bmp)
         renderDocument(context, canvas, doc, actualScaleX, actualScaleY, transparentBackground)
+        return bmp
+    }
+
+    fun renderCustomResolutionBitmap(
+        context: Context,
+        doc: CanvasDocument,
+        customWidth: Int,
+        customHeight: Int,
+        transparentBackground: Boolean,
+        stretchToFit: Boolean = false
+    ): Bitmap {
+        val (w, h) = resolveSafeExportDimensions(customWidth, customHeight)
+        val bmp = try {
+            Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        } catch (_: OutOfMemoryError) {
+            Bitmap.createBitmap(max(1, w / 2), max(1, h / 2), Bitmap.Config.ARGB_8888)
+        }
+        val canvas = Canvas(bmp)
+
+        if (!transparentBackground) {
+            val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+            if (doc.backgroundGradientEnd != null) {
+                bgPaint.shader = LinearGradient(
+                    0f, 0f, bmp.width.toFloat(), bmp.height.toFloat(),
+                    doc.backgroundColor.toInt(),
+                    doc.backgroundGradientEnd.toInt(),
+                    Shader.TileMode.CLAMP
+                )
+            } else {
+                bgPaint.color = doc.backgroundColor.toInt()
+            }
+            canvas.drawRect(0f, 0f, bmp.width.toFloat(), bmp.height.toFloat(), bgPaint)
+        }
+
+        if (stretchToFit) {
+            val sx = bmp.width.toFloat() / doc.artboardWidth.toFloat()
+            val sy = bmp.height.toFloat() / doc.artboardHeight.toFloat()
+            renderDocument(context, canvas, doc, sx, sy, transparentBackground)
+        } else {
+            val fitScale = min(
+                bmp.width.toFloat() / doc.artboardWidth.toFloat(),
+                bmp.height.toFloat() / doc.artboardHeight.toFloat()
+            )
+            val offsetX = (bmp.width - doc.artboardWidth * fitScale) / 2f
+            val offsetY = (bmp.height - doc.artboardHeight * fitScale) / 2f
+            canvas.save()
+            canvas.translate(offsetX, offsetY)
+            renderDocument(context, canvas, doc, fitScale, fitScale, transparentBackground)
+            canvas.restore()
+        }
         return bmp
     }
 }

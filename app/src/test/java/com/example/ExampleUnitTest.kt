@@ -44,4 +44,26 @@ class ExampleUnitTest {
             assertTrue(doc.layers.isNotEmpty())
         }
     }
+
+    @Test
+    fun custom_resolution_and_conversion_math_work_cleanly() {
+        val (safeW, safeH) = com.example.engine.CanvasRenderer.resolveSafeExportDimensions(2400, 1350)
+        assertEquals(2400, safeW)
+        assertEquals(1350, safeH)
+
+        val (cappedW, cappedH) = com.example.engine.CanvasRenderer.resolveSafeExportDimensions(16000, 16000)
+        assertTrue(cappedW.toLong() * cappedH.toLong() <= 8192L * 4608L + 1000L)
+
+        assertEquals(3600, CustomSizeChartCatalog.convertToPixels(12f, SizeUnit.INCH, 300))
+        assertEquals(1500, CustomSizeChartCatalog.convertToPixels(5f, SizeUnit.INCH, 300))
+
+        val img = ImageLayer(
+            name = "Cutout",
+            imagePath = "/tmp/cut.png",
+            originalImagePath = "/tmp/orig.png",
+            cornerRadiusRatio = 0.5f
+        )
+        assertEquals("/tmp/orig.png", img.originalImagePath)
+        assertEquals(0.5f, img.cornerRadiusRatio, 0.001f)
+    }
 }
