@@ -66,4 +66,31 @@ class ExampleUnitTest {
         assertEquals("/tmp/orig.png", img.originalImagePath)
         assertEquals(0.5f, img.cornerRadiusRatio, 0.001f)
     }
+
+    @Test
+    fun super_resolution_pixel_buffer_reconstructs_high_res_cleanly() {
+        val sw = 40
+        val sh = 30
+        val src = IntArray(sw * sh) { idx ->
+            val x = idx % sw
+            val y = idx / sw
+            if (x in 12..28 && y in 8..22) {
+                (255 shl 24) or (255 shl 16) or (122 shl 8) or 0
+            } else {
+                (255 shl 24) or (30 shl 16) or (100 shl 8) or 200
+            }
+        }
+        val (outPixels, dw, dh) = com.example.engine.SuperResolutionEngine.enhancePixelBuffer(
+            initialPixels = src,
+            sw = sw,
+            sh = sh,
+            targetMaxEdge = 1080,
+            profile = com.example.engine.PixelRepairProfile.BALANCED_HD
+        )
+        assertEquals(1080, dw)
+        assertEquals(810, dh)
+        assertEquals(dw * dh, outPixels.size)
+        val centerAlpha = (outPixels[(dh / 2) * dw + (dw / 2)] ushr 24) and 0xFF
+        assertEquals(255, centerAlpha)
+    }
 }

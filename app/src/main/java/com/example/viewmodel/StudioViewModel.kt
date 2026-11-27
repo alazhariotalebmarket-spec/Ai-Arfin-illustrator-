@@ -760,6 +760,113 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         _editorState.update { it.copy(statusMessage = "Restored original photo") }
     }
 
+    fun superResolveSelectedImage(
+        targetMaxEdge: Int = 3840,
+        profile: PixelRepairProfile = PixelRepairProfile.BALANCED_HD
+    ) {
+        val sel = selectedLayer() as? ImageLayer ?: return
+        val origSource = sel.originalImagePath.ifBlank { sel.imagePath }
+        viewModelScope.launch {
+            _editorState.update { it.copy(isProcessingImage = true) }
+            val enhanced = SuperResolutionEngine.enhanceImageFile(
+                imagePath = sel.imagePath,
+                targetMaxEdge = targetMaxEdge,
+                profile = profile
+            )
+            if (enhanced != null) {
+                val ew = enhanced.width
+                val eh = enhanced.height
+                val newPath = projectRepo.saveBitmapToLocalStorage(enhanced)
+                enhanced.recycle()
+                CanvasRenderer.invalidateBitmapCache(sel.imagePath)
+
+                val doc = _editorState.value.document
+                val updatedLayer = sel.copy(
+                    name = "HD Restored (${ew}×${eh})",
+                    imagePath = newPath,
+                    originalImagePath = origSource
+                )
+                val nextDoc = if (doc.category == "HD Cutout" || doc.category == "HD Restore") {
+                    doc.copy(
+                        targetExportWidth = max(doc.targetExportWidth, ew),
+                        targetExportHeight = max(doc.targetExportHeight, eh),
+                        smartModeLabel = "Super-Res HD • ${ew}×${eh}px",
+                        layers = doc.layers.map { if (it.id == sel.id) updatedLayer else it }
+                    )
+                } else {
+                    doc.copy(layers = doc.layers.map { if (it.id == sel.id) updatedLayer else it })
+                }
+                pushHistoryAndUpdate(nextDoc, newSelection = updatedLayer.id)
+                _editorState.update {
+                    it.copy(statusMessage = "Every pixel restored to ${ew}×${eh} HD! Zoom in to inspect")
+                }
+            } else {
+                _editorState.update { it.copy(statusMessage = "Pixel HD restore failed") }
+            }
+            _editorState.update { it.copy(isProcessingImage = false) }
+        }
+    }
+
+    fun openAndSuperResolvePhotoFromUri(
+        uri: Uri,
+        targetMaxEdge: Int = 3840,
+        profile: PixelRepairProfile = PixelRepairProfile.BALANCED_HD
+    ) {
+        viewModelScope.launch {
+            val imported = projectRepo.importImageHighRes(uri)
+            if (imported == null) {
+                _editorState.update { it.copy(statusMessage = "Could not open photo") }
+                return@launch
+            }
+            val enhanced = SuperResolutionEngine.enhanceImageFile(
+                imagePath = imported.path,
+                targetMaxEdge = targetMaxEdge,
+                profile = profile
+            )
+            val finalPath: String
+            val finalW: Int
+            val finalH: Int
+            if (enhanced != null) {
+                finalW = enhanced.width
+                finalH = enhanced.height
+                finalPath = projectRepo.saveBitmapToLocalStorage(enhanced)
+                enhanced.recycle()
+            } else {
+                finalW = imported.width
+                finalH = imported.height
+                finalPath = imported.path
+            }
+
+            val baseDoc = CanvasDocument.createSmart(
+                name = "HD Restored ${finalW}×${finalH}",
+                targetWidthPx = finalW,
+                targetHeightPx = finalH,
+                dpi = 300,
+                category = "HD Restore",
+                backgroundColor = 0xFFFFFFFFL,
+                smartLabel = "Super-Res HD • ${finalW}×${finalH}px"
+            )
+            val layer = ImageLayer(
+                name = "HD Photo (${finalW}×${finalH})",
+                x = 0f,
+                y = 0f,
+                width = baseDoc.artboardWidth.toFloat(),
+                height = baseDoc.artboardHeight.toFloat(),
+                imagePath = finalPath,
+                originalImagePath = imported.path
+            )
+            val doc = baseDoc.copy(layers = listOf(layer))
+            openDocumentInEditor(doc)
+            _editorState.update {
+                it.copy(
+                    selectedLayerId = layer.id,
+                    activeTool = ToolMode.ZOOM,
+                    statusMessage = "Restored ${imported.width}×${imported.height} → ${finalW}×${finalH} HD! Pinch to zoom 10x"
+                )
+            }
+        }
+    }
+
     // Live interactive transform (drag/resize/rotate) with deferred history snapshot
     private var preGestureDoc: CanvasDocument? = null
 

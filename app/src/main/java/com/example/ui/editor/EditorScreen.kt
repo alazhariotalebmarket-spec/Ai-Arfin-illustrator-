@@ -321,6 +321,9 @@ fun EditorScreen(
             onRemoveBackground = { tol, global, color, smooth ->
                 viewModel.removeBackgroundFromSelectedImage(tol, global, color, smooth)
             },
+            onSuperResolveImage = { targetEdge, profile ->
+                viewModel.superResolveSelectedImage(targetEdge, profile)
+            },
             onResetToOriginal = {
                 pickedBgColor = null
                 viewModel.resetSelectedImageToOriginal()
@@ -489,7 +492,7 @@ fun EditorScreen(
                     onPenStrokeChange = { viewModel.setPenStrokeWidth(it) },
                     onEraserSizeChange = { viewModel.setEraserSize(it) },
                     onAlign = { viewModel.alignSelected(it) },
-                    onZoomIn = { zoomScale = (zoomScale * 1.25f).coerceAtMost(5f) },
+                    onZoomIn = { zoomScale = (zoomScale * 1.25f).coerceAtMost(10f) },
                     onZoomOut = { zoomScale = (zoomScale / 1.25f).coerceAtLeast(0.35f) },
                     onZoomReset = { zoomScale = 1f; panOffset = Offset.Zero },
                     onEditSelectedText = {
@@ -590,7 +593,7 @@ fun EditorScreen(
                                     val zoom = event.calculateZoom()
                                     val pan = event.calculatePan()
                                     if (zoom != 1f || pan != Offset.Zero) {
-                                        zoomScale = (zoomScale * zoom).coerceIn(0.35f, 5f)
+                                        zoomScale = (zoomScale * zoom).coerceIn(0.35f, 10f)
                                         panOffset += pan
                                         event.changes.forEach { it.consume() }
                                     }
@@ -601,7 +604,7 @@ fun EditorScreen(
                     .pointerInput(state.activeTool, effectiveScale, artboardLeft, artboardTop) {
                         if (state.activeTool == ToolMode.ZOOM) {
                             detectTransformGestures { _, pan, zoom, _ ->
-                                zoomScale = (zoomScale * zoom).coerceIn(0.35f, 5f)
+                                zoomScale = (zoomScale * zoom).coerceIn(0.35f, 10f)
                                 panOffset += pan
                             }
                         } else {

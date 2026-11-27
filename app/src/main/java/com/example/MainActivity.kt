@@ -67,6 +67,14 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            val homeAutoPixelHdLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.OpenDocument()
+            ) { uri ->
+                if (uri != null) {
+                    viewModel.openAndSuperResolvePhotoFromUri(uri)
+                }
+            }
+
             ArfinIllustratorTheme(darkTheme = prefs.isDarkTheme) {
                 if (showSplash) {
                     SplashScreen(onFinished = { viewModel.finishSplash() })
@@ -256,6 +264,9 @@ class MainActivity : ComponentActivity() {
                                         homeGalleryPhotoLauncher.launch(
                                             PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                                         )
+                                    },
+                                    onSuperResolvePhotoFromFileManager = {
+                                        homeAutoPixelHdLauncher.launch(arrayOf("image/*"))
                                     }
                                 )
                                 MainTab.PROJECTS -> ProjectsScreen(

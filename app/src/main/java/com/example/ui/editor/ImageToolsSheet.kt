@@ -19,6 +19,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.engine.PixelRepairProfile
 import com.example.model.ImageLayer
 import com.example.ui.theme.OrangePrimary
 import com.example.ui.theme.SuccessGreen
@@ -37,12 +38,15 @@ fun ImageToolsSheet(
     onOpenInteractiveCrop: () -> Unit,
     onUpdateImageLayer: (ImageLayer) -> Unit,
     onRemoveBackground: (tolerance: Float, globalKey: Boolean, targetColor: Int?, edgeSmoothness: Float) -> Unit,
+    onSuperResolveImage: (targetMaxEdge: Int, profile: PixelRepairProfile) -> Unit,
     onResetToOriginal: () -> Unit,
     onQuickTransparentExport: () -> Unit
 ) {
     var tolerance by remember { mutableFloatStateOf(0.24f) }
     var edgeSmoothness by remember { mutableFloatStateOf(0.28f) }
     var globalKey by remember { mutableStateOf(false) }
+    var selectedRepairProfile by remember { mutableStateOf(PixelRepairProfile.BALANCED_HD) }
+    var selectedTargetMaxEdge by remember { mutableIntStateOf(3840) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -112,6 +116,82 @@ fun ImageToolsSheet(
 
             if (selectedImageLayer != null) {
                 HorizontalDivider()
+
+                // Auto Pixel-by-Pixel Super-Resolution (Fix Pixelated Photos for 10x Zoom)
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, OrangePrimary.copy(alpha = 0.55f), RoundedCornerShape(14.dp))
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(Icons.Default.Hd, contentDescription = null, tint = OrangePrimary)
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Auto Pixel HD Restorer • ফাটা ছবি HD", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text(
+                                    "ফাটা বা ঝাপসা ছবির প্রতিটি পিক্সেল ৪কে হাই-রেজুলেশনে রিস্টোর করে (জুম করলেও ফাটবে না)",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            PixelRepairProfile.entries.forEach { prof ->
+                                FilterChip(
+                                    selected = selectedRepairProfile == prof,
+                                    onClick = { selectedRepairProfile = prof },
+                                    label = { Text(prof.labelBn, fontSize = 10.sp, maxLines = 1) },
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            listOf("2K HD" to 2560, "4K Ultra" to 3840, "Max 4096" to 4096).forEach { (lbl, edge) ->
+                                FilterChip(
+                                    selected = selectedTargetMaxEdge == edge,
+                                    onClick = { selectedTargetMaxEdge = edge },
+                                    label = { Text(lbl, fontSize = 11.sp) },
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
+
+                        Button(
+                            onClick = { onSuperResolveImage(selectedTargetMaxEdge, selectedRepairProfile) },
+                            enabled = !isProcessing,
+                            colors = ButtonDefaults.buttonColors(containerColor = OrangePrimary),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("auto_pixel_hd_btn")
+                        ) {
+                            if (isProcessing) {
+                                CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Restoring Pixels in HD...")
+                            } else {
+                                Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Auto Enhance Every Pixel • ফাটা ছবি HD করুন", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
 
                 // Interactive Crop Part + HD Upscale Card
                 Surface(

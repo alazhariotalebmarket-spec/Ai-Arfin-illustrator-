@@ -66,6 +66,7 @@ fun HomeScreen(
     onProfileClick: () -> Unit,
     onImportPhotoFromFileManager: () -> Unit = {},
     onImportPhotoFromGallery: () -> Unit = {},
+    onSuperResolvePhotoFromFileManager: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val categories = remember {
@@ -378,6 +379,21 @@ fun HomeScreen(
                             Spacer(modifier = Modifier.width(6.dp))
                             Text("Gallery", fontSize = 12.sp, maxLines = 1)
                         }
+                    }
+                    FilledTonalButton(
+                        onClick = onSuperResolvePhotoFromFileManager,
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = OrangePrimary.copy(alpha = 0.16f),
+                            contentColor = OrangePrimary
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp)
+                            .testTag("home_auto_pixel_hd_btn")
+                    ) {
+                        Icon(Icons.Default.Hd, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("ফাটা ছবি অটো HD করুন (4K Pixel Restore)", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                     }
                 }
             }

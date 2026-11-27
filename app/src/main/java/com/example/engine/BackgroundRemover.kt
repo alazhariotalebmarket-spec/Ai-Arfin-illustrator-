@@ -193,27 +193,14 @@ object BackgroundRemover {
         if (working !== src) src.recycle()
 
         if (upscaleToHighRes) {
-            val longest = max(working.width, working.height)
-            val safeTarget = targetMaxEdge.coerceIn(1080, 3840)
-            if (longest < safeTarget) {
-                val aspect = working.width.toFloat() / working.height.toFloat()
-                val finalW = if (working.width >= working.height) safeTarget else max(1, (safeTarget * aspect).roundToInt())
-                val finalH = if (working.height >= working.width) safeTarget else max(1, (safeTarget / aspect).roundToInt())
-
-                // Progressive multi-pass upscaling avoids blocky artifacts on small crops
-                while (working.width * 1.75f < finalW && working.height * 1.75f < finalH) {
-                    val stepW = (working.width * 1.75f).roundToInt()
-                    val stepH = (working.height * 1.75f).roundToInt()
-                    val next = Bitmap.createScaledBitmap(working, stepW, stepH, true)
-                    if (next !== working) working.recycle()
-                    working = next
-                }
-                if (working.width != finalW || working.height != finalH) {
-                    val finalScaled = Bitmap.createScaledBitmap(working, finalW, finalH, true)
-                    if (finalScaled !== working) working.recycle()
-                    working = finalScaled
-                }
-            }
+            val profile = PixelRepairProfile.BALANCED_HD.copyWithSharpen(sharpenAmount)
+            val enhanced = SuperResolutionEngine.enhanceBitmap(
+                src = working,
+                targetMaxEdge = targetMaxEdge.coerceIn(1080, 4096),
+                profile = profile
+            )
+            if (enhanced !== working) working.recycle()
+            return@withContext enhanced
         }
 
         val amount = sharpenAmount.coerceIn(0f, 1f)
@@ -224,6 +211,14 @@ object BackgroundRemover {
         }
 
         working
+    }
+
+    private fun PixelRepairProfile.copyWithSharpen(sharpenAmount: Float): PixelRepairProfile {
+        return when {
+            sharpenAmount <= 0.3f -> PixelRepairProfile.SMOOTH_PORTRAIT
+            sharpenAmount >= 0.7f -> PixelRepairProfile.CRISP_TEXT_LOGO
+            else -> PixelRepairProfile.BALANCED_HD
+        }
     }
 
     private fun applyUnsharpMask(src: Bitmap, amount: Float): Bitmap {
