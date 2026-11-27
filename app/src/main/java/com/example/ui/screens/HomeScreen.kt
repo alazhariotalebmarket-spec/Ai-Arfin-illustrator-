@@ -64,6 +64,8 @@ fun HomeScreen(
     onOpenAllProjects: () -> Unit,
     onOpenAllTemplates: () -> Unit,
     onProfileClick: () -> Unit,
+    onImportPhotoFromFileManager: () -> Unit = {},
+    onImportPhotoFromGallery: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val categories = remember {
@@ -299,6 +301,83 @@ fun HomeScreen(
                             tint = OrangeDark,
                             modifier = Modifier.size(30.dp)
                         )
+                    }
+                }
+            }
+        }
+
+        // Quick Action Card: File Manager -> Transparent BG & Partial Crop in 4K HD
+        item {
+            Surface(
+                shape = RoundedCornerShape(18.dp),
+                color = MaterialTheme.colorScheme.surface,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, OrangePrimary.copy(alpha = 0.4f), RoundedCornerShape(18.dp))
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(OrangePrimary.copy(alpha = 0.16f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Default.AutoFixHigh,
+                                contentDescription = "Photo Cutout HD",
+                                tint = OrangePrimary
+                            )
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "Photo Cutout & 4K Transparent PNG",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp
+                            )
+                            Text(
+                                "ফাইল ম্যানেজার থেকে ফটো এনে ব্যাকগ্রাউন্ড রিমুভ, অংশ ক্রপ ও HD তৈরি করুন",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Button(
+                            onClick = onImportPhotoFromFileManager,
+                            colors = ButtonDefaults.buttonColors(containerColor = OrangePrimary),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(44.dp)
+                                .testTag("home_file_manager_photo_btn")
+                        ) {
+                            Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("File Manager", fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
+                        }
+                        OutlinedButton(
+                            onClick = onImportPhotoFromGallery,
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(44.dp)
+                                .testTag("home_gallery_photo_btn")
+                        ) {
+                            Icon(Icons.Default.PhotoLibrary, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Gallery", fontSize = 12.sp, maxLines = 1)
+                        }
                     }
                 }
             }

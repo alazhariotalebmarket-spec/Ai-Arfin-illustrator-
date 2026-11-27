@@ -190,7 +190,7 @@ fun EditorContextBar(
                             ) {
                                 Icon(Icons.Default.AutoFixHigh, contentDescription = null, modifier = Modifier.size(14.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("Crop / BG Remove", fontSize = 11.sp)
+                                Text("Crop / BG / HD", fontSize = 11.sp)
                             }
                         }
                         if (selectedLayer is ShapeLayer) {

@@ -1,7 +1,10 @@
 package com.example.ui.editor
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -10,24 +13,35 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.ImageLayer
 import com.example.ui.theme.OrangePrimary
+import com.example.ui.theme.SuccessGreen
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ImageToolsSheet(
     selectedImageLayer: ImageLayer?,
     isProcessing: Boolean,
+    pickedBgColor: Int?,
+    onClearPickedBgColor: () -> Unit,
     onDismiss: () -> Unit,
+    onPickFromFileManager: () -> Unit,
     onPickFromGallery: () -> Unit,
     onCaptureFromCamera: () -> Unit,
+    onOpenInteractiveCrop: () -> Unit,
     onUpdateImageLayer: (ImageLayer) -> Unit,
-    onRemoveBackground: (tolerance: Float, globalKey: Boolean) -> Unit
+    onRemoveBackground: (tolerance: Float, globalKey: Boolean, targetColor: Int?, edgeSmoothness: Float) -> Unit,
+    onResetToOriginal: () -> Unit,
+    onQuickTransparentExport: () -> Unit
 ) {
     var tolerance by remember { mutableFloatStateOf(0.24f) }
+    var edgeSmoothness by remember { mutableFloatStateOf(0.28f) }
     var globalKey by remember { mutableStateOf(false) }
 
     ModalBottomSheet(
@@ -40,32 +54,51 @@ fun ImageToolsSheet(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 28.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Image Studio • ছবি ও ব্যাকগ্রাউন্ড রিমুভার", style = MaterialTheme.typography.titleLarge)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Photo & Cutout Studio", style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        "ফাইল ম্যানেজার থেকে ফটো এনে ক্রপ, ব্যাকগ্রাউন্ড রিমুভ ও 4K HD তৈরি করুন",
+                        fontSize = 11.sp,
+                        color = OrangePrimary
+                    )
+                }
                 IconButton(onClick = onDismiss) {
                     Icon(Icons.Default.Close, contentDescription = "Close")
                 }
             }
 
-            // Upload from Gallery (Photo Picker) or Camera
+            // Import from File Manager, Gallery, Camera (Zero storage permission)
+            Button(
+                onClick = onPickFromFileManager,
+                colors = ButtonDefaults.buttonColors(containerColor = OrangePrimary),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .testTag("pick_file_manager_btn")
+            ) {
+                Icon(Icons.Default.FolderOpen, contentDescription = "File Manager", modifier = Modifier.size(20.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Select Photo from File Manager • ফাইল ম্যানেজার", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            }
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Button(
+                OutlinedButton(
                     onClick = onPickFromGallery,
-                    colors = ButtonDefaults.buttonColors(containerColor = OrangePrimary),
                     modifier = Modifier.weight(1f)
                 ) {
                     Icon(Icons.Default.PhotoLibrary, contentDescription = "Gallery", modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Gallery", fontWeight = FontWeight.Bold)
+                    Text("Gallery")
                 }
                 OutlinedButton(
                     onClick = onCaptureFromCamera,
@@ -79,67 +112,67 @@ fun ImageToolsSheet(
 
             if (selectedImageLayer != null) {
                 HorizontalDivider()
-                Text("Selected Photo Controls", style = MaterialTheme.typography.labelMedium, color = OrangePrimary)
 
-                // Opacity Slider
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Opacity ${(selectedImageLayer.opacity * 100).toInt()}%", fontSize = 12.sp, modifier = Modifier.width(96.dp))
-                    Slider(
-                        value = selectedImageLayer.opacity,
-                        onValueChange = { onUpdateImageLayer(selectedImageLayer.copy(opacity = it)) },
-                        valueRange = 0.05f..1f,
-                        colors = SliderDefaults.colors(thumbColor = OrangePrimary, activeTrackColor = OrangePrimary),
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-
-                // Rotate Slider + 90 deg button
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Rotate ${selectedImageLayer.rotation.toInt()}°", fontSize = 12.sp, modifier = Modifier.width(96.dp))
-                    Slider(
-                        value = selectedImageLayer.rotation,
-                        onValueChange = { onUpdateImageLayer(selectedImageLayer.copy(rotation = it)) },
-                        valueRange = -180f..180f,
-                        colors = SliderDefaults.colors(thumbColor = OrangePrimary, activeTrackColor = OrangePrimary),
-                        modifier = Modifier.weight(1f)
-                    )
-                    IconButton(onClick = {
-                        val nextRot = (selectedImageLayer.rotation + 90f) % 360f
-                        onUpdateImageLayer(selectedImageLayer.copy(rotation = nextRot))
-                    }) {
-                        Icon(Icons.Default.RotateRight, contentDescription = "Rotate 90", tint = OrangePrimary)
+                // Interactive Crop Part + HD Upscale Card
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = OrangePrimary.copy(alpha = 0.12f),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, OrangePrimary.copy(alpha = 0.45f), RoundedCornerShape(14.dp))
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(Icons.Default.Crop, contentDescription = null, tint = OrangePrimary)
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Crop Any Part & HD Upscale", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text(
+                                    "ফটোর নির্দিষ্ট অংশ কেটে 4K হাই-রেজুলেশন করুন এবং ব্যাকগ্রাউন্ডের রঙ বাছুন",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        Button(
+                            onClick = onOpenInteractiveCrop,
+                            colors = ButtonDefaults.buttonColors(containerColor = OrangePrimary),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("open_interactive_crop_btn")
+                        ) {
+                            Icon(Icons.Default.Transform, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Open Visual Crop & Color Picker (HD)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
                     }
                 }
 
-                // Crop Presets
-                Text("Quick Crop • ক্রপ", style = MaterialTheme.typography.labelMedium)
+                // Cutout Shape Presets (Sharp, Rounded, Circle)
+                Text("Cutout Shape • কাটার ধরন", style = MaterialTheme.typography.labelMedium)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    val crops = listOf(
-                        "Full" to listOf(0f, 0f, 1f, 1f),
-                        "Center" to listOf(0.12f, 0.12f, 0.88f, 0.88f),
-                        "Wide" to listOf(0f, 0.2f, 1f, 0.8f),
-                        "Tall" to listOf(0.2f, 0f, 0.8f, 1f)
+                    val shapes = listOf(
+                        "Sharp" to 0f,
+                        "Rounded" to 0.12f,
+                        "Pill" to 0.28f,
+                        "Circle" to 0.5f
                     )
-                    crops.forEach { (label, box) ->
-                        OutlinedButton(
-                            onClick = {
-                                onUpdateImageLayer(
-                                    selectedImageLayer.copy(
-                                        cropLeft = box[0],
-                                        cropTop = box[1],
-                                        cropRight = box[2],
-                                        cropBottom = box[3]
-                                    )
-                                )
-                            },
-                            contentPadding = PaddingValues(horizontal = 8.dp),
+                    shapes.forEach { (label, ratio) ->
+                        val active = kotlin.math.abs(selectedImageLayer.cornerRadiusRatio - ratio) < 0.02f
+                        FilterChip(
+                            selected = active,
+                            onClick = { onUpdateImageLayer(selectedImageLayer.copy(cornerRadiusRatio = ratio)) },
+                            label = { Text(label, fontSize = 11.sp) },
                             modifier = Modifier.weight(1f)
-                        ) {
-                            Text(label, fontSize = 11.sp)
-                        }
+                        )
                     }
                 }
 
@@ -153,18 +186,71 @@ fun ImageToolsSheet(
                         modifier = Modifier.padding(14.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text("Offline Background Remover", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                        Text(
-                            "Removes solid/studio backdrop cleanly on-device without internet.",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Transparent Background Remover", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            if (selectedImageLayer.originalImagePath.isNotBlank() &&
+                                selectedImageLayer.originalImagePath != selectedImageLayer.imagePath
+                            ) {
+                                TextButton(
+                                    onClick = onResetToOriginal,
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                                ) {
+                                    Text("Restore Original", fontSize = 11.sp, color = OrangePrimary)
+                                }
+                            }
+                        }
+
+                        if (pickedBgColor != null) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(22.dp)
+                                            .clip(CircleShape)
+                                            .background(Color(pickedBgColor))
+                                            .border(1.dp, OrangePrimary, CircleShape)
+                                    )
+                                    Text("Target Color Picked", fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                                }
+                                TextButton(onClick = onClearPickedBgColor) {
+                                    Text("Use Auto", fontSize = 11.sp, color = OrangePrimary)
+                                }
+                            }
+                        } else {
+                            Text(
+                                "Auto-detects backdrop edges (or open Visual Crop & Color Picker to tap any BG color).",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Tolerance ${(tolerance * 100).toInt()}%", fontSize = 12.sp, modifier = Modifier.width(104.dp))
+                            Text("Tolerance ${(tolerance * 100).toInt()}%", fontSize = 12.sp, modifier = Modifier.width(106.dp))
                             Slider(
                                 value = tolerance,
                                 onValueChange = { tolerance = it },
-                                valueRange = 0.08f..0.55f,
+                                valueRange = 0.06f..0.60f,
+                                colors = SliderDefaults.colors(thumbColor = OrangePrimary, activeTrackColor = OrangePrimary),
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Edge Smooth ${(edgeSmoothness * 100).toInt()}%", fontSize = 12.sp, modifier = Modifier.width(106.dp))
+                            Slider(
+                                value = edgeSmoothness,
+                                onValueChange = { edgeSmoothness = it },
+                                valueRange = 0.10f..0.60f,
                                 colors = SliderDefaults.colors(thumbColor = OrangePrimary, activeTrackColor = OrangePrimary),
                                 modifier = Modifier.weight(1f)
                             )
@@ -181,21 +267,68 @@ fun ImageToolsSheet(
                             )
                         }
                         Button(
-                            onClick = { onRemoveBackground(tolerance, globalKey) },
+                            onClick = { onRemoveBackground(tolerance, globalKey, pickedBgColor, edgeSmoothness) },
                             enabled = !isProcessing,
                             colors = ButtonDefaults.buttonColors(containerColor = OrangePrimary),
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("remove_bg_btn")
                         ) {
                             if (isProcessing) {
                                 CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Removing Background...")
+                                Text("Processing HD Transparent...")
                             } else {
                                 Icon(Icons.Default.AutoFixHigh, contentDescription = "Remove BG", modifier = Modifier.size(18.dp))
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Remove Background Now", fontWeight = FontWeight.Bold)
+                                Text("Make Transparent Background Now", fontWeight = FontWeight.Bold)
                             }
                         }
+                    }
+                }
+
+                // 1-Tap High-Res Transparent PNG Export shortcut
+                FilledTonalButton(
+                    onClick = onQuickTransparentExport,
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = SuccessGreen.copy(alpha = 0.18f),
+                        contentColor = SuccessGreen
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                ) {
+                    Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Export Transparent PNG (4K / 8K HD)", fontWeight = FontWeight.Bold)
+                }
+
+                // Opacity & Rotate Controls
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Opacity ${(selectedImageLayer.opacity * 100).toInt()}%", fontSize = 12.sp, modifier = Modifier.width(96.dp))
+                    Slider(
+                        value = selectedImageLayer.opacity,
+                        onValueChange = { onUpdateImageLayer(selectedImageLayer.copy(opacity = it)) },
+                        valueRange = 0.05f..1f,
+                        colors = SliderDefaults.colors(thumbColor = OrangePrimary, activeTrackColor = OrangePrimary),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Rotate ${selectedImageLayer.rotation.toInt()}°", fontSize = 12.sp, modifier = Modifier.width(96.dp))
+                    Slider(
+                        value = selectedImageLayer.rotation,
+                        onValueChange = { onUpdateImageLayer(selectedImageLayer.copy(rotation = it)) },
+                        valueRange = -180f..180f,
+                        colors = SliderDefaults.colors(thumbColor = OrangePrimary, activeTrackColor = OrangePrimary),
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(onClick = {
+                        val nextRot = (selectedImageLayer.rotation + 90f) % 360f
+                        onUpdateImageLayer(selectedImageLayer.copy(rotation = nextRot))
+                    }) {
+                        Icon(Icons.Default.RotateRight, contentDescription = "Rotate 90", tint = OrangePrimary)
                     }
                 }
             }

@@ -38,18 +38,20 @@ fun TextEditorSheet(
     onConfirmNewText: (TextLayer) -> Unit,
     onUpdateExistingText: (TextLayer) -> Unit
 ) {
-    var text by remember { mutableStateOf(existingLayer?.text ?: "আমার বাংলা ডিজাইন") }
-    var fontId by remember { mutableStateOf(existingLayer?.fontId ?: "hind_siliguri") }
-    var fontSize by remember { mutableFloatStateOf(existingLayer?.fontSize ?: 72f) }
-    var textColor by remember { mutableLongStateOf(existingLayer?.color ?: defaultColor) }
-    var bold by remember { mutableStateOf(existingLayer?.bold ?: false) }
-    var italic by remember { mutableStateOf(existingLayer?.italic ?: false) }
-    var align by remember { mutableStateOf(existingLayer?.align ?: TextAlignMode.CENTER) }
-    var shadowEnabled by remember { mutableStateOf(existingLayer?.shadowEnabled ?: false) }
-    var strokeWidth by remember { mutableFloatStateOf(existingLayer?.strokeWidth ?: 0f) }
-    var strokeColor by remember { mutableLongStateOf(existingLayer?.strokeColor ?: 0xFFFFFFFFL) }
+    val layerKey = existingLayer?.id ?: "new_text_layer"
+    var text by remember(layerKey) { mutableStateOf(existingLayer?.text ?: "আমার বাংলা ডিজাইন") }
+    var fontId by remember(layerKey) { mutableStateOf(existingLayer?.fontId ?: "hind_siliguri") }
+    var fontSize by remember(layerKey) { mutableFloatStateOf(existingLayer?.fontSize ?: 72f) }
+    var textColor by remember(layerKey) { mutableLongStateOf(existingLayer?.color ?: defaultColor) }
+    var bold by remember(layerKey) { mutableStateOf(existingLayer?.bold ?: false) }
+    var italic by remember(layerKey) { mutableStateOf(existingLayer?.italic ?: false) }
+    var align by remember(layerKey) { mutableStateOf(existingLayer?.align ?: TextAlignMode.CENTER) }
+    var shadowEnabled by remember(layerKey) { mutableStateOf(existingLayer?.shadowEnabled ?: false) }
+    var strokeWidth by remember(layerKey) { mutableFloatStateOf(existingLayer?.strokeWidth ?: 0f) }
+    var strokeColor by remember(layerKey) { mutableLongStateOf(existingLayer?.strokeColor ?: 0xFFFFFFFFL) }
     var fontFilter by remember { mutableStateOf("All") }
 
+    val selectedFontOption = remember(fontId) { FontCatalog.findById(fontId) }
     val fontCategories = listOf("All", "Bangla", "English", "Calligraphy", "Display", "Mono")
     val filteredFonts = remember(fontFilter) {
         if (fontFilter == "All") FontCatalog.fonts else FontCatalog.fonts.filter { it.category == fontFilter }
@@ -96,6 +98,36 @@ fun TextEditorSheet(
                     .fillMaxWidth()
                     .testTag("text_editor_input")
             )
+
+            // Live Font Preview Box
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, OrangePrimary.copy(alpha = 0.45f), RoundedCornerShape(12.dp))
+            ) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = "Preview • ${selectedFontOption.displayName}",
+                        fontSize = 10.sp,
+                        color = OrangePrimary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = text.ifBlank { "Arfin Illustrator" },
+                        fontFamily = FontCatalog.composeFontFamily(selectedFontOption),
+                        fontWeight = if (bold || selectedFontOption.defaultBold) FontWeight.Bold else FontWeight.Normal,
+                        fontStyle = if (italic || selectedFontOption.defaultItalic) FontStyle.Italic else FontStyle.Normal,
+                        fontSize = 20.sp,
+                        color = if (textColor == 0xFF1E1E1EL) MaterialTheme.colorScheme.onSurface else Color(textColor.toInt()),
+                        maxLines = 2
+                    )
+                }
+            }
 
             // Quick Bangla Phrases + 1-Tap Bangla Digit Converter (০-৯)
             val bdPhrases = remember {

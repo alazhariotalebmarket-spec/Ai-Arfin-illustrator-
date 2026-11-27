@@ -95,7 +95,7 @@ object FontCatalog {
         StudioFontOption("jetbrains_mono", "JetBrains Mono", "Mono", R.font.jetbrains_mono, sampleText = "CODE // 4K")
     )
 
-    private val typefaceCache = mutableMapOf<Int, Typeface>()
+    private val typefaceCache = mutableMapOf<String, Typeface>()
 
     fun findById(id: String): StudioFontOption =
         fonts.find { it.id == id } ?: fonts.first()
@@ -103,18 +103,26 @@ object FontCatalog {
     fun composeFontFamily(option: StudioFontOption): FontFamily =
         FontFamily(Font(option.fontRes))
 
-    fun getTypeface(context: Context, option: StudioFontOption, bold: Boolean, italic: Boolean): Typeface {
-        val base = typefaceCache.getOrPut(option.fontRes) {
-            ResourcesCompat.getFont(context, option.fontRes) ?: Typeface.DEFAULT
+    fun getBaseTypeface(context: Context, option: StudioFontOption): Typeface {
+        val assetKey = "${option.id}_${option.fontRes}"
+        return typefaceCache.getOrPut(assetKey) {
+            val fromAsset = runCatching {
+                Typeface.createFromAsset(context.assets, "fonts/${option.id}.ttf")
+            }.getOrNull()
+            fromAsset ?: ResourcesCompat.getFont(context, option.fontRes) ?: Typeface.DEFAULT
         }
+    }
+
+    fun getTypeface(context: Context, option: StudioFontOption, bold: Boolean, italic: Boolean): Typeface {
+        val base = getBaseTypeface(context, option)
         val effectiveBold = bold || option.defaultBold
         val effectiveItalic = italic || option.defaultItalic
+        if (!effectiveBold && !effectiveItalic) return base
         val style = when {
             effectiveBold && effectiveItalic -> Typeface.BOLD_ITALIC
             effectiveBold -> Typeface.BOLD
-            effectiveItalic -> Typeface.ITALIC
-            else -> Typeface.NORMAL
+            else -> Typeface.ITALIC
         }
-        return Typeface.create(base, style)
+        return runCatching { Typeface.create(base, style) }.getOrDefault(base)
     }
 }

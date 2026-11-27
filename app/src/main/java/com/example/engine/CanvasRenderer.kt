@@ -39,6 +39,10 @@ object CanvasRenderer {
         }
     }
 
+    fun clearTextCache() {
+        textLayoutCache.evictAll()
+    }
+
     fun getCachedPreviewThumbnail(key: String): Bitmap? {
         val bmp = previewThumbCache.get(key)
         return if (bmp != null && !bmp.isRecycled) bmp else null
@@ -256,7 +260,9 @@ object CanvasRenderer {
 
     private fun drawTextLayer(context: Context, canvas: Canvas, layer: TextLayer, alphaInt: Int) {
         val fontOpt = FontCatalog.findById(layer.fontId)
-        val typeface = FontCatalog.getTypeface(context, fontOpt, layer.bold, layer.italic)
+        val baseTypeface = FontCatalog.getBaseTypeface(context, fontOpt)
+        val effectiveBold = layer.bold || fontOpt.defaultBold
+        val effectiveItalic = layer.italic || fontOpt.defaultItalic
         val alignment = when (layer.align) {
             TextAlignMode.LEFT -> Layout.Alignment.ALIGN_NORMAL
             TextAlignMode.CENTER -> Layout.Alignment.ALIGN_CENTER
@@ -266,10 +272,12 @@ object CanvasRenderer {
         val layoutW = max(20, layer.width.toInt())
 
         if (layer.strokeWidth > 0f) {
-            val strokeKey = "s|${layer.text}|${layer.fontId}|${layer.fontSize}|$layoutW|${layer.align}|${layer.bold}|${layer.italic}|${layer.strokeWidth}|${layer.strokeColor}|$alphaInt"
+            val strokeKey = "s|${layer.text}|${layer.fontId}|${layer.fontSize}|$layoutW|${layer.align}|$effectiveBold|$effectiveItalic|${layer.strokeWidth}|${layer.strokeColor}|$alphaInt"
             val strokeLayout = textLayoutCache.get(strokeKey) ?: run {
                 val strokeTp = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-                    this.typeface = typeface
+                    this.typeface = baseTypeface
+                    isFakeBoldText = effectiveBold
+                    textSkewX = if (effectiveItalic) -0.22f else 0f
                     textSize = layer.fontSize
                     style = Paint.Style.STROKE
                     strokeWidth = layer.strokeWidth
@@ -287,10 +295,12 @@ object CanvasRenderer {
             strokeLayout.draw(canvas)
         }
 
-        val fillKey = "f|${layer.text}|${layer.fontId}|${layer.fontSize}|$layoutW|${layer.height.toInt()}|${layer.align}|${layer.bold}|${layer.italic}|${layer.color}|${layer.gradientEndColor}|${layer.shadowEnabled}|$alphaInt"
+        val fillKey = "f|${layer.text}|${layer.fontId}|${layer.fontSize}|$layoutW|${layer.height.toInt()}|${layer.align}|$effectiveBold|$effectiveItalic|${layer.color}|${layer.gradientEndColor}|${layer.shadowEnabled}|$alphaInt"
         val layout = textLayoutCache.get(fillKey) ?: run {
             val tp = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-                this.typeface = typeface
+                this.typeface = baseTypeface
+                isFakeBoldText = effectiveBold
+                textSkewX = if (effectiveItalic) -0.22f else 0f
                 textSize = layer.fontSize
                 letterSpacing = fontOpt.letterSpacingEm
                 if (layer.gradientEndColor != null) {
@@ -330,10 +340,23 @@ object CanvasRenderer {
 
         val srcRect = Rect(srcLeft, srcTop, srcRight, srcBottom)
         val dstRect = RectF(0f, 0f, layer.width, layer.height)
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG or Paint.DITHER_FLAG).apply {
             alpha = alphaInt
         }
-        canvas.drawBitmap(bmp, srcRect, dstRect, paint)
+        if (layer.cornerRadiusRatio > 0.001f) {
+            canvas.save()
+            val rx = min(layer.width, layer.height) * layer.cornerRadiusRatio.coerceIn(0f, 0.5f)
+            val ry = if (layer.cornerRadiusRatio >= 0.499f) layer.height / 2f else rx
+            val finalRx = if (layer.cornerRadiusRatio >= 0.499f) layer.width / 2f else rx
+            val clipPath = Path().apply {
+                addRoundRect(dstRect, finalRx, ry, Path.Direction.CW)
+            }
+            canvas.clipPath(clipPath)
+            canvas.drawBitmap(bmp, srcRect, dstRect, paint)
+            canvas.restore()
+        } else {
+            canvas.drawBitmap(bmp, srcRect, dstRect, paint)
+        }
     }
 
     fun renderThumbnail(context: Context, doc: CanvasDocument, maxDimension: Int = 360): Bitmap {

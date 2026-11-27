@@ -2,8 +2,11 @@ package com.example
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.view.WindowCompat
 import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -32,7 +35,8 @@ import com.example.viewmodel.StudioViewModel
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        WindowCompat.setDecorFitsSystemWindows(window, true)
+        WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightStatusBars = false
         setContent {
             val viewModel: StudioViewModel = viewModel()
             val prefs by viewModel.preferences.collectAsStateWithLifecycle()
@@ -46,6 +50,22 @@ class MainActivity : ComponentActivity() {
 
             var newDesignPreset by remember { mutableStateOf<ArtboardPreset?>(null) }
             var showNewDesignSheet by remember { mutableStateOf(false) }
+
+            val homeFilePhotoLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.OpenDocument()
+            ) { uri ->
+                if (uri != null) {
+                    viewModel.openPhotoInTransparentHdStudio(uri)
+                }
+            }
+
+            val homeGalleryPhotoLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.PickVisualMedia()
+            ) { uri ->
+                if (uri != null) {
+                    viewModel.openPhotoInTransparentHdStudio(uri)
+                }
+            }
 
             ArfinIllustratorTheme(darkTheme = prefs.isDarkTheme) {
                 if (showSplash) {
@@ -228,7 +248,15 @@ class MainActivity : ComponentActivity() {
                                     onOpenTemplate = viewModel::openTemplate,
                                     onOpenAllProjects = { viewModel.selectTab(MainTab.PROJECTS) },
                                     onOpenAllTemplates = { viewModel.selectTab(MainTab.TEMPLATES) },
-                                    onProfileClick = { viewModel.selectTab(MainTab.SETTINGS) }
+                                    onProfileClick = { viewModel.selectTab(MainTab.SETTINGS) },
+                                    onImportPhotoFromFileManager = {
+                                        homeFilePhotoLauncher.launch(arrayOf("image/*"))
+                                    },
+                                    onImportPhotoFromGallery = {
+                                        homeGalleryPhotoLauncher.launch(
+                                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                        )
+                                    }
                                 )
                                 MainTab.PROJECTS -> ProjectsScreen(
                                     projects = projects,

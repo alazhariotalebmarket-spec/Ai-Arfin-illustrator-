@@ -74,25 +74,91 @@ class ProjectRepository(
         if (thumbFile.exists()) thumbFile.delete()
     }
 
-    suspend fun importImageToLocalStorage(uri: Uri): String? = withContext(Dispatchers.IO) {
+    data class ImportedImageResult(
+        val path: String,
+        val width: Int,
+        val height: Int
+    )
+
+    suspend fun importImageHighRes(uri: Uri, maxEdge: Int = 4096): ImportedImageResult? = withContext(Dispatchers.IO) {
         runCatching {
-            val input = context.contentResolver.openInputStream(uri) ?: return@withContext null
-            val decoded = input.use { BitmapFactory.decodeStream(it) } ?: return@withContext null
-            val scaled = downscaleIfNeeded(decoded, maxEdge = 2048)
+            val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                BitmapFactory.decodeStream(stream, null, boundsOpts)
+            }
+
+            var inSample = 1
+            val longestRaw = maxOf(boundsOpts.outWidth, boundsOpts.outHeight)
+            if (longestRaw > maxEdge) {
+                while (longestRaw / (inSample * 2) >= maxEdge) {
+                    inSample *= 2
+                }
+            }
+
+            val orientation = context.contentResolver.openInputStream(uri)?.use { stream ->
+                runCatching {
+                    android.media.ExifInterface(stream).getAttributeInt(
+                        android.media.ExifInterface.TAG_ORIENTATION,
+                        android.media.ExifInterface.ORIENTATION_NORMAL
+                    )
+                }.getOrDefault(android.media.ExifInterface.ORIENTATION_NORMAL)
+            } ?: android.media.ExifInterface.ORIENTATION_NORMAL
+
+            val decodeOpts = BitmapFactory.Options().apply {
+                inSampleSize = inSample
+                inPreferredConfig = Bitmap.Config.ARGB_8888
+            }
+            val decoded = context.contentResolver.openInputStream(uri)?.use { stream ->
+                BitmapFactory.decodeStream(stream, null, decodeOpts)
+            } ?: return@withContext null
+
+            val rotated = applyExifOrientation(decoded, orientation)
+            if (rotated !== decoded) decoded.recycle()
+
+            val scaled = downscaleIfNeeded(rotated, maxEdge = maxEdge)
+            if (scaled !== rotated) rotated.recycle()
+
             val file = File(projectsDir, "img_${UUID.randomUUID()}.png")
             FileOutputStream(file).use { out ->
-                scaled.compress(Bitmap.CompressFormat.PNG, 95, out)
+                scaled.compress(Bitmap.CompressFormat.PNG, 100, out)
             }
-            if (scaled !== decoded) decoded.recycle()
+            val finalW = scaled.width
+            val finalH = scaled.height
             scaled.recycle()
-            file.absolutePath
+            ImportedImageResult(file.absolutePath, finalW, finalH)
         }.getOrNull()
+    }
+
+    suspend fun importImageToLocalStorage(uri: Uri): String? =
+        importImageHighRes(uri)?.path
+
+    private fun applyExifOrientation(src: Bitmap, orientation: Int): Bitmap {
+        val matrix = android.graphics.Matrix()
+        when (orientation) {
+            android.media.ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
+            android.media.ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
+            android.media.ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
+            android.media.ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.postScale(-1f, 1f)
+            android.media.ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.postScale(1f, -1f)
+            android.media.ExifInterface.ORIENTATION_TRANSPOSE -> {
+                matrix.postRotate(90f)
+                matrix.postScale(-1f, 1f)
+            }
+            android.media.ExifInterface.ORIENTATION_TRANSVERSE -> {
+                matrix.postRotate(270f)
+                matrix.postScale(-1f, 1f)
+            }
+            else -> return src
+        }
+        return runCatching {
+            Bitmap.createBitmap(src, 0, 0, src.width, src.height, matrix, true)
+        }.getOrDefault(src)
     }
 
     suspend fun saveBitmapToLocalStorage(bitmap: Bitmap): String = withContext(Dispatchers.IO) {
         val file = File(projectsDir, "img_${UUID.randomUUID()}.png")
         FileOutputStream(file).use { out ->
-            bitmap.compress(Bitmap.CompressFormat.PNG, 95, out)
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
         }
         file.absolutePath
     }

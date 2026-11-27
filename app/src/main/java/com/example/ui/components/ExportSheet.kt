@@ -35,14 +35,20 @@ import kotlinx.coroutines.launch
 fun ExportSheet(
     document: CanvasDocument,
     defaultResolution: ExportResolution,
+    defaultTransparentBg: Boolean = false,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
     var selectedFormat by remember { mutableStateOf(ExportFormat.PNG) }
-    var selectedResolution by remember { mutableStateOf(defaultResolution) }
-    var transparentBg by remember { mutableStateOf(false) }
+    var selectedResolution by remember(defaultTransparentBg) {
+        mutableStateOf(
+            if (defaultTransparentBg && defaultResolution.multiplierOrTargetMax < 3840) ExportResolution.RES_4K
+            else defaultResolution
+        )
+    }
+    var transparentBg by remember(document.id, defaultTransparentBg) { mutableStateOf(defaultTransparentBg) }
     var isExporting by remember { mutableStateOf(false) }
     var resultMessage by remember { mutableStateOf<String?>(null) }
 

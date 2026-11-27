@@ -90,10 +90,12 @@ object DocumentSerializer {
                 is ImageLayer -> {
                     obj.put("type", "image")
                     obj.put("imagePath", layer.imagePath)
+                    obj.put("originalImagePath", layer.originalImagePath)
                     obj.put("cropLeft", layer.cropLeft.toDouble())
                     obj.put("cropTop", layer.cropTop.toDouble())
                     obj.put("cropRight", layer.cropRight.toDouble())
                     obj.put("cropBottom", layer.cropBottom.toDouble())
+                    obj.put("cornerRadiusRatio", layer.cornerRadiusRatio.toDouble())
                 }
                 is StickerLayer -> {
                     obj.put("type", "sticker")
@@ -191,16 +193,19 @@ object DocumentSerializer {
                     )
                 }
                 "image" -> {
+                    val imgPath = obj.optString("imagePath", "")
                     layers.add(
                         ImageLayer(
                             id = id, name = name, visible = visible, locked = locked,
                             x = x, y = y, width = width, height = height,
                             rotation = rotation, opacity = opacity,
-                            imagePath = obj.optString("imagePath", ""),
+                            imagePath = imgPath,
+                            originalImagePath = obj.optString("originalImagePath", imgPath).ifBlank { imgPath },
                             cropLeft = obj.optDouble("cropLeft", 0.0).toFloat(),
                             cropTop = obj.optDouble("cropTop", 0.0).toFloat(),
                             cropRight = obj.optDouble("cropRight", 1.0).toFloat(),
-                            cropBottom = obj.optDouble("cropBottom", 1.0).toFloat()
+                            cropBottom = obj.optDouble("cropBottom", 1.0).toFloat(),
+                            cornerRadiusRatio = obj.optDouble("cornerRadiusRatio", 0.0).toFloat()
                         )
                     )
                 }

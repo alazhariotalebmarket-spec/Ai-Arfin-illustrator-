@@ -521,19 +521,28 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     fun importImageFromUri(uri: Uri) {
         viewModelScope.launch {
             _editorState.update { it.copy(isProcessingImage = true) }
-            val path = projectRepo.importImageToLocalStorage(uri)
-            if (path != null) {
+            val imported = projectRepo.importImageHighRes(uri)
+            if (imported != null) {
                 val doc = _editorState.value.document
-                val size = min(doc.artboardWidth, doc.artboardHeight) * 0.55f
+                val aspect = imported.width.toFloat() / max(1, imported.height).toFloat()
+                val maxW = doc.artboardWidth * 0.78f
+                val maxH = doc.artboardHeight * 0.78f
+                val (layerW, layerH) = if (maxW / aspect <= maxH) {
+                    maxW to (maxW / aspect)
+                } else {
+                    (maxH * aspect) to maxH
+                }
                 val layer = ImageLayer(
-                    name = "Imported Photo",
-                    x = (doc.artboardWidth - size) / 2f,
-                    y = (doc.artboardHeight - size) / 2f,
-                    width = size,
-                    height = size,
-                    imagePath = path
+                    name = "Photo (${imported.width}×${imported.height})",
+                    x = (doc.artboardWidth - layerW) / 2f,
+                    y = (doc.artboardHeight - layerH) / 2f,
+                    width = layerW,
+                    height = layerH,
+                    imagePath = imported.path,
+                    originalImagePath = imported.path
                 )
                 pushHistoryAndUpdate(doc.copy(layers = doc.layers + layer), newSelection = layer.id)
+                _editorState.update { it.copy(statusMessage = "Photo loaded (${imported.width}×${imported.height} HD)") }
             } else {
                 _editorState.update { it.copy(statusMessage = "Could not load selected image") }
             }
@@ -541,22 +550,214 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun removeBackgroundFromSelectedImage(tolerance: Float = 0.24f, globalKey: Boolean = false) {
+    fun openPhotoInTransparentHdStudio(uri: Uri) {
+        viewModelScope.launch {
+            val imported = projectRepo.importImageHighRes(uri)
+            if (imported == null) {
+                _editorState.update { it.copy(statusMessage = "Could not open photo from storage") }
+                return@launch
+            }
+            val aspect = imported.width.toFloat() / max(1, imported.height).toFloat()
+            val targetMax = max(3840, max(imported.width, imported.height))
+            val (targetW, targetH) = if (aspect >= 1f) {
+                targetMax to max(320, (targetMax / aspect).roundToInt())
+            } else {
+                max(320, (targetMax * aspect).roundToInt()) to targetMax
+            }
+            val baseDoc = CanvasDocument.createSmart(
+                name = "HD Cutout ${imported.width}×${imported.height}",
+                targetWidthPx = targetW,
+                targetHeightPx = targetH,
+                dpi = 300,
+                category = "HD Cutout",
+                backgroundColor = 0x00FFFFFFL,
+                smartLabel = "HD Studio • ${targetW}×${targetH}px Transparent"
+            )
+            val layer = ImageLayer(
+                name = "Photo (${imported.width}×${imported.height})",
+                x = 0f,
+                y = 0f,
+                width = baseDoc.artboardWidth.toFloat(),
+                height = baseDoc.artboardHeight.toFloat(),
+                imagePath = imported.path,
+                originalImagePath = imported.path
+            )
+            val doc = baseDoc.copy(layers = listOf(layer))
+            openDocumentInEditor(doc)
+            _editorState.update {
+                it.copy(
+                    selectedLayerId = layer.id,
+                    transparentPreview = true,
+                    activeTool = ToolMode.SELECT,
+                    statusMessage = "Tap Image below to Crop part or Remove Background in 4K HD"
+                )
+            }
+        }
+    }
+
+    fun removeBackgroundFromSelectedImage(
+        tolerance: Float = 0.24f,
+        globalKey: Boolean = false,
+        targetColor: Int? = null,
+        edgeSmoothness: Float = 0.28f
+    ) {
         val sel = selectedLayer() as? ImageLayer ?: return
+        val sourcePath = sel.originalImagePath.ifBlank { sel.imagePath }
         viewModelScope.launch {
             _editorState.update { it.copy(isProcessingImage = true) }
-            val processed = BackgroundRemover.removeBackground(sel.imagePath, tolerance, globalKey)
+            val processed = BackgroundRemover.removeBackground(
+                imagePath = sourcePath,
+                tolerance = tolerance,
+                globalKeyMode = globalKey,
+                targetColor = targetColor,
+                edgeSmoothness = edgeSmoothness
+            )
             if (processed != null) {
                 val newPath = projectRepo.saveBitmapToLocalStorage(processed)
                 processed.recycle()
                 CanvasRenderer.invalidateBitmapCache(sel.imagePath)
-                replaceLayerWithHistory(sel.copy(imagePath = newPath, name = "${sel.name} (No BG)"))
-                _editorState.update { it.copy(statusMessage = "Background removed cleanly") }
+                replaceLayerWithHistory(
+                    sel.copy(
+                        imagePath = newPath,
+                        originalImagePath = sourcePath,
+                        name = if (sel.name.contains("Transparent")) sel.name else "${sel.name} (Transparent)"
+                    )
+                )
+                _editorState.update {
+                    it.copy(
+                        transparentPreview = true,
+                        statusMessage = "Transparent background applied! Export as PNG for HD"
+                    )
+                }
             } else {
                 _editorState.update { it.copy(statusMessage = "Background removal failed") }
             }
             _editorState.update { it.copy(isProcessingImage = false) }
         }
+    }
+
+    fun applyCropAndEnhanceSelectedImage(
+        cropLeft: Float,
+        cropTop: Float,
+        cropRight: Float,
+        cropBottom: Float,
+        cornerRadiusRatio: Float,
+        upscaleHd: Boolean,
+        sharpenAmount: Float,
+        fitArtboardToCutout: Boolean
+    ) {
+        val sel = selectedLayer() as? ImageLayer ?: return
+        val sourcePath = sel.imagePath
+        viewModelScope.launch {
+            _editorState.update { it.copy(isProcessingImage = true) }
+            val croppedBmp = BackgroundRemover.cropAndEnhanceToHighRes(
+                imagePath = sourcePath,
+                cropLeft = cropLeft,
+                cropTop = cropTop,
+                cropRight = cropRight,
+                cropBottom = cropBottom,
+                upscaleToHighRes = upscaleHd,
+                targetMaxEdge = if (upscaleHd) 3840 else 2048,
+                sharpenAmount = sharpenAmount
+            )
+            if (croppedBmp != null) {
+                val cw = croppedBmp.width
+                val ch = croppedBmp.height
+                val newPath = projectRepo.saveBitmapToLocalStorage(croppedBmp)
+                croppedBmp.recycle()
+                CanvasRenderer.invalidateBitmapCache(sel.imagePath)
+
+                val aspect = cw.toFloat() / max(1, ch).toFloat()
+                if (fitArtboardToCutout) {
+                    val targetMax = max(3840, max(cw, ch))
+                    val (targetW, targetH) = if (aspect >= 1f) {
+                        targetMax to max(320, (targetMax / aspect).roundToInt())
+                    } else {
+                        max(320, (targetMax * aspect).roundToInt()) to targetMax
+                    }
+                    val doc = _editorState.value.document
+                    val smartDoc = CanvasDocument.createSmart(
+                        name = doc.name,
+                        targetWidthPx = targetW,
+                        targetHeightPx = targetH,
+                        dpi = 300,
+                        category = doc.category,
+                        backgroundColor = doc.backgroundColor
+                    )
+                    val updatedLayer = sel.copy(
+                        name = "HD Cutout (${cw}×${ch})",
+                        x = 0f,
+                        y = 0f,
+                        width = smartDoc.artboardWidth.toFloat(),
+                        height = smartDoc.artboardHeight.toFloat(),
+                        imagePath = newPath,
+                        originalImagePath = newPath,
+                        cropLeft = 0f,
+                        cropTop = 0f,
+                        cropRight = 1f,
+                        cropBottom = 1f,
+                        cornerRadiusRatio = cornerRadiusRatio
+                    )
+                    val nextDoc = doc.copy(
+                        artboardWidth = smartDoc.artboardWidth,
+                        artboardHeight = smartDoc.artboardHeight,
+                        targetExportWidth = smartDoc.targetExportWidth,
+                        targetExportHeight = smartDoc.targetExportHeight,
+                        smartModeLabel = "HD Cutout • ${targetW}×${targetH}px",
+                        layers = doc.layers.map { if (it.id == sel.id) updatedLayer else it }
+                    )
+                    pushHistoryAndUpdate(nextDoc, newSelection = updatedLayer.id)
+                    _editorState.update {
+                        it.copy(
+                            transparentPreview = true,
+                            statusMessage = "Cropped & upscaled to ${cw}×${ch} HD! Ready to Export"
+                        )
+                    }
+                } else {
+                    val baseArea = max(sel.width, sel.height)
+                    val (newW, newH) = if (aspect >= 1f) {
+                        baseArea to (baseArea / aspect).coerceAtLeast(48f)
+                    } else {
+                        (baseArea * aspect).coerceAtLeast(48f) to baseArea
+                    }
+                    val updatedLayer = sel.copy(
+                        name = "Cutout (${cw}×${ch})",
+                        width = newW,
+                        height = newH,
+                        imagePath = newPath,
+                        originalImagePath = newPath,
+                        cropLeft = 0f,
+                        cropTop = 0f,
+                        cropRight = 1f,
+                        cropBottom = 1f,
+                        cornerRadiusRatio = cornerRadiusRatio
+                    )
+                    replaceLayerWithHistory(updatedLayer)
+                    _editorState.update {
+                        it.copy(statusMessage = "Cropped part created at ${cw}×${ch} HD")
+                    }
+                }
+            } else {
+                _editorState.update { it.copy(statusMessage = "Could not process selected crop") }
+            }
+            _editorState.update { it.copy(isProcessingImage = false) }
+        }
+    }
+
+    fun resetSelectedImageToOriginal() {
+        val sel = selectedLayer() as? ImageLayer ?: return
+        val orig = sel.originalImagePath.ifBlank { return }
+        replaceLayerWithHistory(
+            sel.copy(
+                imagePath = orig,
+                cropLeft = 0f,
+                cropTop = 0f,
+                cropRight = 1f,
+                cropBottom = 1f,
+                cornerRadiusRatio = 0f
+            )
+        )
+        _editorState.update { it.copy(statusMessage = "Restored original photo") }
     }
 
     // Live interactive transform (drag/resize/rotate) with deferred history snapshot

@@ -98,9 +98,19 @@ fun EditorScreen(
     var showTextSheet by remember { mutableStateOf(false) }
     var editingTextLayer by remember { mutableStateOf<TextLayer?>(null) }
     var showImageSheet by remember { mutableStateOf(false) }
+    var showPhotoCutoutDialog by remember { mutableStateOf(false) }
+    var pickedBgColor by remember(state.selectedLayerId) { mutableStateOf<Int?>(null) }
 
-    // Camera & Photo Picker launchers
+    // Camera, File Manager & Photo Picker launchers
     var pendingCameraUri by remember { mutableStateOf<Uri?>(null) }
+
+    val fileManagerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            viewModel.importImageFromUri(uri)
+        }
+    }
 
     val galleryLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
@@ -220,6 +230,7 @@ fun EditorScreen(
         ExportSheet(
             document = state.document,
             defaultResolution = defaultResolution,
+            defaultTransparentBg = state.transparentPreview,
             onDismiss = { showExportSheet = false }
         )
     }
@@ -277,6 +288,7 @@ fun EditorScreen(
                 viewModel.setTool(ToolMode.SELECT)
             },
             onUpdateExistingText = { updated ->
+                CanvasRenderer.clearTextCache()
                 viewModel.replaceLayerWithHistory(updated)
             }
         )
@@ -286,7 +298,12 @@ fun EditorScreen(
         ImageToolsSheet(
             selectedImageLayer = selectedLayer as? ImageLayer,
             isProcessing = state.isProcessingImage,
+            pickedBgColor = pickedBgColor,
+            onClearPickedBgColor = { pickedBgColor = null },
             onDismiss = { showImageSheet = false },
+            onPickFromFileManager = {
+                fileManagerLauncher.launch(arrayOf("image/*"))
+            },
             onPickFromGallery = {
                 galleryLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
             },
@@ -296,8 +313,48 @@ fun EditorScreen(
                 if (granted) launchCameraCapture()
                 else cameraPermLauncher.launch(Manifest.permission.CAMERA)
             },
+            onOpenInteractiveCrop = {
+                showImageSheet = false
+                showPhotoCutoutDialog = true
+            },
             onUpdateImageLayer = { updated -> viewModel.replaceLayerWithHistory(updated) },
-            onRemoveBackground = { tol, global -> viewModel.removeBackgroundFromSelectedImage(tol, global) }
+            onRemoveBackground = { tol, global, color, smooth ->
+                viewModel.removeBackgroundFromSelectedImage(tol, global, color, smooth)
+            },
+            onResetToOriginal = {
+                pickedBgColor = null
+                viewModel.resetSelectedImageToOriginal()
+            },
+            onQuickTransparentExport = {
+                if (!state.transparentPreview) viewModel.toggleTransparentPreview()
+                showImageSheet = false
+                showExportSheet = true
+            }
+        )
+    }
+
+    if (showPhotoCutoutDialog && selectedLayer is ImageLayer) {
+        PhotoCutoutDialog(
+            imageLayer = selectedLayer,
+            initialPickedColor = pickedBgColor,
+            onPickedColorChange = { pickedBgColor = it },
+            onDismiss = { showPhotoCutoutDialog = false },
+            onApplyCropAndEnhance = { l, t, r, b, cornerRatio, upscaleHd, sharpenAmt, fitArtboard ->
+                viewModel.applyCropAndEnhanceSelectedImage(
+                    cropLeft = l,
+                    cropTop = t,
+                    cropRight = r,
+                    cropBottom = b,
+                    cornerRadiusRatio = cornerRatio,
+                    upscaleHd = upscaleHd,
+                    sharpenAmount = sharpenAmt,
+                    fitArtboardToCutout = fitArtboard
+                )
+                if (fitArtboard) {
+                    zoomScale = 1f
+                    panOffset = Offset.Zero
+                }
+            }
         )
     }
 
@@ -309,11 +366,13 @@ fun EditorScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(MaterialTheme.colorScheme.surface)
+                    .windowInsetsPadding(WindowInsets.statusBars.union(WindowInsets.displayCutout))
+                    .padding(top = 8.dp)
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 6.dp, vertical = 6.dp),
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(
@@ -365,7 +424,13 @@ fun EditorScreen(
 
                     IconButton(onClick = {
                         scope.launch {
-                            val res = ExportManager.prepareShareUri(context, state.document, ExportFormat.PNG, defaultResolution)
+                            val res = ExportManager.prepareShareUri(
+                                context,
+                                state.document,
+                                ExportFormat.PNG,
+                                defaultResolution,
+                                transparentBackground = state.transparentPreview
+                            )
                             res.shareUri?.let { uri ->
                                 ExportManager.launchShareIntent(context, uri, ExportFormat.PNG.mimeType)
                             }
@@ -374,15 +439,18 @@ fun EditorScreen(
                         Icon(Icons.Default.Share, contentDescription = "Share", modifier = Modifier.size(20.dp))
                     }
 
+                    Spacer(modifier = Modifier.width(4.dp))
+
                     Button(
                         onClick = { showExportSheet = true },
                         colors = ButtonDefaults.buttonColors(containerColor = OrangePrimary),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
                         modifier = Modifier
-                            .height(36.dp)
+                            .height(38.dp)
+                            .padding(end = 2.dp)
                             .testTag("editor_export_btn")
                     ) {
-                        Text("Export", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Text("Export", fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
                     }
                 }
 
@@ -404,7 +472,12 @@ fun EditorScreen(
             }
         },
         bottomBar = {
-            Column(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surface)
+                    .windowInsetsPadding(WindowInsets.navigationBars)
+            ) {
                 EditorContextBar(
                     state = state,
                     selectedLayer = selectedLayer,
@@ -460,8 +533,8 @@ fun EditorScreen(
                         ToolButton("Shapes", Icons.Default.Category, state.activeTool == ToolMode.SHAPES) {
                             viewModel.setTool(ToolMode.SHAPES)
                         }
-                        ToolButton("Text", Icons.Default.Title, false) {
-                            editingTextLayer = null
+                        ToolButton("Text", Icons.Default.Title, selectedLayer is TextLayer) {
+                            editingTextLayer = selectedLayer as? TextLayer
                             showTextSheet = true
                         }
                         ToolButton("Image", Icons.Default.Image, false) {

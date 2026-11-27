@@ -277,10 +277,12 @@ data class ImageLayer(
     override val rotation: Float = 0f,
     override val opacity: Float = 1f,
     val imagePath: String = "",
+    val originalImagePath: String = imagePath,
     val cropLeft: Float = 0f,
     val cropTop: Float = 0f,
     val cropRight: Float = 1f,
-    val cropBottom: Float = 1f
+    val cropBottom: Float = 1f,
+    val cornerRadiusRatio: Float = 0f
 ) : LayerElement {
     override fun withBase(
         name: String, visible: Boolean, locked: Boolean,
