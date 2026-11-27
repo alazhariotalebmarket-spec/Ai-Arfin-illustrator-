@@ -39,3 +39,13 @@
    gradle :app:assembleDebug
    ```
 4. Install `app/build/outputs/apk/debug/app-debug.apk` on your Android device.
+
+---
+
+## Rebuild APK with GitHub Actions
+
+1. Push this repository to GitHub (`main` or `master` branch).
+2. Open the **Actions** tab on GitHub and select **Build Android APK**.
+3. Each push automatically builds the APK, or click **Run workflow** to rebuild manually.
+4. Download **ArfinIllustrator-debug-apk** from the workflow run's **Artifacts** section.
+
