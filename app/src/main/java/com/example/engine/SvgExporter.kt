@@ -76,7 +76,9 @@ object SvgExporter {
                     }
                     when (layer.shapeType) {
                         ShapeType.RECTANGLE -> body.append("""    <rect width="${layer.width}" height="${layer.height}" rx="${layer.cornerRadius}" $fillAttr $strokeAttr />""").append('\n')
+                        ShapeType.ROUNDED_RECT -> body.append("""    <rect width="${layer.width}" height="${layer.height}" rx="${maxOf(24f, layer.cornerRadius)}" $fillAttr $strokeAttr />""").append('\n')
                         ShapeType.CIRCLE -> body.append("""    <ellipse cx="${layer.width / 2f}" cy="${layer.height / 2f}" rx="${layer.width / 2f}" ry="${layer.height / 2f}" $fillAttr $strokeAttr />""").append('\n')
+                        ShapeType.ARC -> body.append("""    <ellipse cx="${layer.width / 2f}" cy="${layer.height / 2f}" rx="${layer.width / 2f}" ry="${layer.height / 2f}" fill="none" $strokeAttr />""").append('\n')
                         ShapeType.TRIANGLE -> body.append("""    <polygon points="${layer.width / 2f},0 ${layer.width},${layer.height} 0,${layer.height}" $fillAttr $strokeAttr />""").append('\n')
                         ShapeType.LINE -> body.append("""    <line x1="0" y1="${layer.height / 2f}" x2="${layer.width}" y2="${layer.height / 2f}" stroke="${hexColor(layer.fillColor)}" stroke-width="${maxOf(4f, layer.strokeWidth)}" stroke-linecap="round" />""").append('\n')
                         ShapeType.STAR -> {

@@ -3,9 +3,10 @@ package com.example.ui.editor
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -15,6 +16,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -32,6 +34,7 @@ fun LayersPanel(
     onToggleLock: (String) -> Unit,
     onBringForward: (String) -> Unit,
     onSendBackward: (String) -> Unit,
+    onReorderLayer: (fromActualIndex: Int, toActualIndex: Int) -> Unit,
     onRenameLayer: (String, String) -> Unit,
     onDeleteLayer: (String) -> Unit,
     onClose: () -> Unit,
@@ -75,7 +78,7 @@ fun LayersPanel(
         shadowElevation = 16.dp,
         modifier = modifier
             .fillMaxHeight()
-            .width(285.dp)
+            .width(292.dp)
             .border(1.dp, MaterialTheme.colorScheme.outline)
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -88,7 +91,7 @@ fun LayersPanel(
             ) {
                 Column {
                     Text("Layers • লেয়ার (${layers.size})", fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                    Text("Top to bottom stacking order", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Drag handle to reorder • Tap to select", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 IconButton(onClick = onClose) {
                     Icon(Icons.Default.Close, contentDescription = "Close Layers")
@@ -118,8 +121,11 @@ fun LayersPanel(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    items(reversed, key = { it.id }) { layer ->
+                    itemsIndexed(reversed, key = { _, l -> l.id }) { revIndex, layer ->
                         val isSelected = layer.id == selectedLayerId
+                        val actualIdx = layers.lastIndex - revIndex
+                        var dragAccum by remember(layer.id) { mutableFloatStateOf(0f) }
+
                         Surface(
                             shape = RoundedCornerShape(12.dp),
                             color = if (isSelected) OrangePrimary.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceVariant,
@@ -136,8 +142,32 @@ fun LayersPanel(
                             Column(modifier = Modifier.padding(8.dp)) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
+                                    // Drag handle for vertical reorder
+                                    Icon(
+                                        imageVector = Icons.Default.DragHandle,
+                                        contentDescription = "Drag to reorder",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier
+                                            .size(20.dp)
+                                            .pointerInput(layer.id, layers.size) {
+                                                detectVerticalDragGestures(
+                                                    onDragStart = { dragAccum = 0f },
+                                                    onVerticalDrag = { _, dragAmount ->
+                                                        dragAccum += dragAmount
+                                                        val threshold = 72f
+                                                        if (dragAccum <= -threshold && actualIdx < layers.lastIndex) {
+                                                            onReorderLayer(actualIdx, actualIdx + 1)
+                                                            dragAccum = 0f
+                                                        } else if (dragAccum >= threshold && actualIdx > 0) {
+                                                            onReorderLayer(actualIdx, actualIdx - 1)
+                                                            dragAccum = 0f
+                                                        }
+                                                    }
+                                                )
+                                            }
+                                    )
                                     Icon(
                                         imageVector = when (layer) {
                                             is ShapeLayer -> Icons.Default.Category
@@ -158,6 +188,14 @@ fun LayersPanel(
                                         overflow = TextOverflow.Ellipsis,
                                         modifier = Modifier.weight(1f)
                                     )
+                                    if (layer.groupId != null) {
+                                        Surface(
+                                            shape = RoundedCornerShape(4.dp),
+                                            color = OrangePrimary.copy(alpha = 0.2f)
+                                        ) {
+                                            Text("GRP", fontSize = 8.sp, color = OrangePrimary, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp))
+                                        }
+                                    }
                                     IconButton(
                                         onClick = {
                                             draftName = layer.name

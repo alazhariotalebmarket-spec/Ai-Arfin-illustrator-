@@ -68,6 +68,14 @@ class ProjectRepository(
         saveProject(cloned)
     }
 
+    suspend fun renameProject(projectId: String, newName: String) = withContext(Dispatchers.IO) {
+        val entity = projectDao.getProjectById(projectId) ?: return@withContext
+        val doc = DocumentSerializer.fromJson(entity.documentJson)
+        val clean = newName.trim().ifEmpty { doc.name }
+        val updated = doc.copy(name = clean, updatedAt = System.currentTimeMillis())
+        saveProject(updated, existingCreatedAt = entity.createdAt)
+    }
+
     suspend fun deleteProject(projectId: String) = withContext(Dispatchers.IO) {
         projectDao.deleteProjectById(projectId)
         val thumbFile = File(projectsDir, "thumb_$projectId.png")

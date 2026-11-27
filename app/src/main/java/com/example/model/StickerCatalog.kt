@@ -2,13 +2,15 @@ package com.example.model
 
 enum class StickerCategory(val label: String, val labelBn: String) {
     ALL("All", "সব"),
-    ISLAMIC("Islamic & Calligraphy", "ইসলামিক"),
-    FRAMES("Frames & Borders", "ফ্রেম"),
-    BADGES("Badges & Ribbons", "ব্যাজ"),
-    SHAPES("Geometric & Stars", "জ্যামিতিক"),
-    SOCIAL("Social & UI", "সোশ্যাল"),
-    ARROWS("Arrows & Accents", "অ্যারো"),
-    NATURE("Nature & Festive", "উৎসব")
+    SHAPES("Shapes", "শেপ"),
+    LINES("Lines", "লাইন"),
+    ARROWS("Arrows", "অ্যারো"),
+    ICONS("Icons", "আইকন"),
+    SOCIAL("Social Media", "সোশ্যাল"),
+    FRAMES("Frames & Borders", "ফ্রেম ও বর্ডার"),
+    BADGES("Stickers & Badges", "ব্যাজ"),
+    ISLAMIC("Islamic", "ইসলামিক"),
+    NATURE("Festive", "উৎসব")
 }
 
 enum class StickerRenderKind {
@@ -36,11 +38,18 @@ enum class StickerRenderKind {
     GEO_SPARKLE_4, GEO_SPARKLE_GROUP, GEO_CHECKER_ACCENT, GEO_DIAGONAL_STRIPES,
     GEO_ABSTRACT_BLOB, GEO_ZIGZAG, GEO_CROSSHAIR,
 
-    // Social & UI
+    // Lines & Dividers
+    LINE_SOLID_ORNATE, LINE_DASHED_RULE, LINE_DOUBLE_BAR, LINE_DIAMOND_DIVIDER,
+
+    // Social Media & UI
+    SOC_FACEBOOK, SOC_YOUTUBE, SOC_WHATSAPP, SOC_INSTAGRAM,
     SOC_PLAY_BUTTON, SOC_SUBSCRIBE_PILL, SOC_BELL_RING, SOC_THUMBS_UP,
     SOC_HEART_LIKE, SOC_SHARE_NODES, SOC_COMMENT_BUBBLE, SOC_CAMERA_LENS,
     SOC_MIC_PODCAST, SOC_LOCATION_PIN, SOC_PHONE_CALL, SOC_GLOBE_WEB,
     SOC_AT_HANDLE, SOC_VERIFIED_CHECK, SOC_LIVE_DOT,
+
+    // General Icons
+    ICON_CLOCK, ICON_CALENDAR, ICON_STAR, ICON_MAIL,
 
     // Arrows & Accents
     ARR_RIGHT_BOLD, ARR_CURVED_SWOOSH, ARR_DOUBLE_CHEVRON, ARR_CIRCULAR_LOOP,
@@ -69,6 +78,39 @@ data class StickerAsset(
 
 object StickerCatalog {
     val items: List<StickerAsset> = listOf(
+        // ==================== SOCIAL MEDIA ICONS (Facebook, YouTube, WhatsApp, Phone, Location) ====================
+        StickerAsset("soc_facebook", "Facebook", StickerCategory.SOCIAL, StickerRenderKind.SOC_FACEBOOK, "f", 0xFF1877F2L, 0xFFFFFFFFL),
+        StickerAsset("soc_youtube", "YouTube", StickerCategory.SOCIAL, StickerRenderKind.SOC_YOUTUBE, "", 0xFFFF0000L, 0xFFFFFFFFL),
+        StickerAsset("soc_whatsapp", "WhatsApp", StickerCategory.SOCIAL, StickerRenderKind.SOC_WHATSAPP, "✆", 0xFF25D366L, 0xFFFFFFFFL),
+        StickerAsset("soc_phone", "Phone Call", StickerCategory.SOCIAL, StickerRenderKind.SOC_PHONE_CALL, "☎", 0xFF16A34AL, 0xFFFFFFFFL),
+        StickerAsset("soc_loc", "Location Pin", StickerCategory.SOCIAL, StickerRenderKind.SOC_LOCATION_PIN, "", 0xFFEF4444L, 0xFFFFFFFFL),
+        StickerAsset("soc_instagram", "Instagram", StickerCategory.SOCIAL, StickerRenderKind.SOC_INSTAGRAM, "", 0xFFE1306CL, 0xFFFFFFFFL),
+        StickerAsset("soc_play", "YouTube Play Badge", StickerCategory.SOCIAL, StickerRenderKind.SOC_PLAY_BUTTON, "", 0xFFFF0000L, 0xFFFFFFFFL),
+        StickerAsset("soc_sub", "Subscribe Pill", StickerCategory.SOCIAL, StickerRenderKind.SOC_SUBSCRIBE_PILL, "SUBSCRIBE", 0xFFFF0000L, 0xFFFFFFFFL),
+        StickerAsset("soc_bell", "Notification Bell", StickerCategory.SOCIAL, StickerRenderKind.SOC_BELL_RING, "", 0xFFF59E0BL, 0xFF1E1E1EL),
+        StickerAsset("soc_like", "Thumbs Up", StickerCategory.SOCIAL, StickerRenderKind.SOC_THUMBS_UP, "", 0xFF2563EBL, 0xFFFFFFFFL),
+        StickerAsset("soc_heart", "Love Reaction", StickerCategory.SOCIAL, StickerRenderKind.SOC_HEART_LIKE, "", 0xFFEF4444L, 0xFFFFFFFFL),
+        StickerAsset("soc_share", "Share Icon", StickerCategory.SOCIAL, StickerRenderKind.SOC_SHARE_NODES, "", 0xFF10B981L, 0xFF1E1E1EL),
+        StickerAsset("soc_comment", "Comment Bubble", StickerCategory.SOCIAL, StickerRenderKind.SOC_COMMENT_BUBBLE, "", 0xFF3B82F6L, 0xFFFFFFFFL),
+        StickerAsset("soc_globe", "Website Globe", StickerCategory.SOCIAL, StickerRenderKind.SOC_GLOBE_WEB, "", 0xFF0284C7L, 0xFF1E1E1EL),
+        StickerAsset("soc_at", "Social @ Handle", StickerCategory.SOCIAL, StickerRenderKind.SOC_AT_HANDLE, "@", 0xFFFF7A00L, 0xFFFFFFFFL),
+        StickerAsset("soc_check", "Verified Check", StickerCategory.SOCIAL, StickerRenderKind.SOC_VERIFIED_CHECK, "", 0xFF22C55EL, 0xFFFFFFFFL),
+        StickerAsset("soc_live", "LIVE Badge", StickerCategory.SOCIAL, StickerRenderKind.SOC_LIVE_DOT, "LIVE", 0xFFDC2626L, 0xFFFFFFFFL),
+
+        // ==================== LINES & DIVIDERS ====================
+        StickerAsset("line_ornate", "Ornate Gold Divider", StickerCategory.LINES, StickerRenderKind.LINE_SOLID_ORNATE, "", 0xFFD4AF37L, 0xFF1E1E1EL),
+        StickerAsset("line_dashed", "Dashed Divider Line", StickerCategory.LINES, StickerRenderKind.LINE_DASHED_RULE, "", 0xFFFF7A00L, 0xFF1E1E1EL),
+        StickerAsset("line_double", "Double Bar Divider", StickerCategory.LINES, StickerRenderKind.LINE_DOUBLE_BAR, "", 0xFF1E1E1EL, 0xFFFF7A00L),
+        StickerAsset("line_diamond", "Diamond Accent Line", StickerCategory.LINES, StickerRenderKind.LINE_DIAMOND_DIVIDER, "", 0xFFD4AF37L, 0xFF0F5132L),
+
+        // ==================== UI & DESIGN ICONS ====================
+        StickerAsset("ico_clock", "Time / Clock Icon", StickerCategory.ICONS, StickerRenderKind.ICON_CLOCK, "", 0xFFFF7A00L, 0xFF1E1E1EL),
+        StickerAsset("ico_calendar", "Date / Calendar Icon", StickerCategory.ICONS, StickerRenderKind.ICON_CALENDAR, "", 0xFF2563EBL, 0xFFFFFFFFL),
+        StickerAsset("ico_star", "Featured Star Icon", StickerCategory.ICONS, StickerRenderKind.ICON_STAR, "", 0xFFF59E0BL, 0xFF1E1E1EL),
+        StickerAsset("ico_mail", "Email Envelope Icon", StickerCategory.ICONS, StickerRenderKind.ICON_MAIL, "", 0xFF0D9488L, 0xFFFFFFFFL),
+        StickerAsset("ico_camera", "Camera Lens", StickerCategory.ICONS, StickerRenderKind.SOC_CAMERA_LENS, "", 0xFF1E1E1EL, 0xFFFF7A00L),
+        StickerAsset("ico_mic", "Podcast Mic", StickerCategory.ICONS, StickerRenderKind.SOC_MIC_PODCAST, "", 0xFF1E1E1EL, 0xFFFF7A00L),
+
         // 20 Islamic & Calligraphy Elements
         StickerAsset("isl_bismillah", "Bismillah Seal", StickerCategory.ISLAMIC, StickerRenderKind.BISMILLAH_SEAL, "بِسْمِ اللهِ الرَّحْمٰنِ الرَّحِيْمِ", 0xFFD4AF37L, 0xFF0F3D2EL),
         StickerAsset("isl_allah", "Allah Calligraphy", StickerCategory.ISLAMIC, StickerRenderKind.ALLAH_MEDALLION, "الله", 0xFFD4AF37L, 0xFF1E1E1EL),
@@ -127,7 +169,7 @@ object StickerCatalog {
         StickerAsset("bdg_vip", "VIP Diamond", StickerCategory.BADGES, StickerRenderKind.BADGE_DIAMOND_VIP, "VIP", 0xFF1E1E1EL, 0xFFD4AF37L),
         StickerAsset("bdg_admission", "Admission Ribbon", StickerCategory.BADGES, StickerRenderKind.RIBBON_BANNER, "ভর্তি চলছে", 0xFF0F5132L, 0xFFD4AF37L),
 
-        // 18 Geometric & Abstract
+        // 18 Geometric & Abstract Shapes
         StickerAsset("geo_hex", "Hexagon Cluster", StickerCategory.SHAPES, StickerRenderKind.GEO_HEX_GRID, "", 0xFFFF7A00L, 0xFF1E1E1EL),
         StickerAsset("geo_rings", "Concentric Rings", StickerCategory.SHAPES, StickerRenderKind.GEO_CONCENTRIC, "", 0xFFFF7A00L, 0xFF2563EBL),
         StickerAsset("geo_sunburst", "Sunburst Rays", StickerCategory.SHAPES, StickerRenderKind.GEO_SUNBURST, "", 0xFFF59E0BL, 0xFFFF7A00L),
@@ -146,23 +188,6 @@ object StickerCatalog {
         StickerAsset("geo_cross", "Target Crosshair", StickerCategory.SHAPES, StickerRenderKind.GEO_CROSSHAIR, "", 0xFFEF4444L, 0xFF1E1E1EL),
         StickerAsset("geo_teal_blob", "Teal Fluid Shape", StickerCategory.SHAPES, StickerRenderKind.GEO_ABSTRACT_BLOB, "", 0xFF0D9488L, 0xFF5EEAD4L),
         StickerAsset("geo_gold_rings", "Gold Orbit Rings", StickerCategory.SHAPES, StickerRenderKind.GEO_CONCENTRIC, "", 0xFFD4AF37L, 0xFF1E1E1EL),
-
-        // 15 Social & UI
-        StickerAsset("soc_play", "YouTube Play Badge", StickerCategory.SOCIAL, StickerRenderKind.SOC_PLAY_BUTTON, "", 0xFFFF0000L, 0xFFFFFFFFL),
-        StickerAsset("soc_sub", "Subscribe Pill", StickerCategory.SOCIAL, StickerRenderKind.SOC_SUBSCRIBE_PILL, "SUBSCRIBE", 0xFFFF0000L, 0xFFFFFFFFL),
-        StickerAsset("soc_bell", "Notification Bell", StickerCategory.SOCIAL, StickerRenderKind.SOC_BELL_RING, "", 0xFFF59E0BL, 0xFF1E1E1EL),
-        StickerAsset("soc_like", "Thumbs Up", StickerCategory.SOCIAL, StickerRenderKind.SOC_THUMBS_UP, "", 0xFF2563EBL, 0xFFFFFFFFL),
-        StickerAsset("soc_heart", "Love Reaction", StickerCategory.SOCIAL, StickerRenderKind.SOC_HEART_LIKE, "", 0xFFEF4444L, 0xFFFFFFFFL),
-        StickerAsset("soc_share", "Share Icon", StickerCategory.SOCIAL, StickerRenderKind.SOC_SHARE_NODES, "", 0xFF10B981L, 0xFF1E1E1EL),
-        StickerAsset("soc_comment", "Comment Bubble", StickerCategory.SOCIAL, StickerRenderKind.SOC_COMMENT_BUBBLE, "", 0xFF3B82F6L, 0xFFFFFFFFL),
-        StickerAsset("soc_camera", "Camera Lens", StickerCategory.SOCIAL, StickerRenderKind.SOC_CAMERA_LENS, "", 0xFF1E1E1EL, 0xFFFF7A00L),
-        StickerAsset("soc_mic", "Podcast Mic", StickerCategory.SOCIAL, StickerRenderKind.SOC_MIC_PODCAST, "", 0xFF1E1E1EL, 0xFFFF7A00L),
-        StickerAsset("soc_loc", "Location Pin", StickerCategory.SOCIAL, StickerRenderKind.SOC_LOCATION_PIN, "", 0xFFEF4444L, 0xFFFFFFFFL),
-        StickerAsset("soc_phone", "Call Icon", StickerCategory.SOCIAL, StickerRenderKind.SOC_PHONE_CALL, "", 0xFF16A34AL, 0xFFFFFFFFL),
-        StickerAsset("soc_globe", "Website Globe", StickerCategory.SOCIAL, StickerRenderKind.SOC_GLOBE_WEB, "", 0xFF0284C7L, 0xFF1E1E1EL),
-        StickerAsset("soc_at", "Social @ Badge", StickerCategory.SOCIAL, StickerRenderKind.SOC_AT_HANDLE, "@", 0xFFFF7A00L, 0xFFFFFFFFL),
-        StickerAsset("soc_check", "Verified Check", StickerCategory.SOCIAL, StickerRenderKind.SOC_VERIFIED_CHECK, "", 0xFF22C55EL, 0xFFFFFFFFL),
-        StickerAsset("soc_live", "LIVE Badge", StickerCategory.SOCIAL, StickerRenderKind.SOC_LIVE_DOT, "LIVE", 0xFFDC2626L, 0xFFFFFFFFL),
 
         // 12 Arrows & Pointers
         StickerAsset("arr_right", "Bold Right Arrow", StickerCategory.ARROWS, StickerRenderKind.ARR_RIGHT_BOLD, "", 0xFFFF7A00L, 0xFF1E1E1EL),

@@ -66,9 +66,9 @@ fun StickerSheet(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column {
-                    Text("Stickers & Islamic Elements", style = MaterialTheme.typography.titleLarge)
+                    Text("Elements & Stickers Library", style = MaterialTheme.typography.titleLarge)
                     Text(
-                        "${StickerCatalog.items.size} Vector Assets • ইসলামিক ক্যালিগ্রাফি ও ফ্রেম",
+                        "${StickerCatalog.items.size} Assets • Shapes, Lines, Arrows, Social, Frames",
                         style = MaterialTheme.typography.bodyMedium,
                         color = OrangePrimary
                     )
@@ -84,7 +84,7 @@ fun StickerSheet(
                 value = search,
                 onValueChange = { search = it },
                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search") },
-                placeholder = { Text("Search stickers, Bismillah, Eid, Frame...") },
+                placeholder = { Text("Search Facebook, YouTube, WhatsApp, Arrow, Frame...") },
                 singleLine = true,
                 shape = RoundedCornerShape(14.dp),
                 modifier = Modifier.fillMaxWidth()

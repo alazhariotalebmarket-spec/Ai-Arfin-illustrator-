@@ -72,24 +72,30 @@ object CustomSizeChartCatalog {
 
 enum class ToolMode(val label: String, val labelBn: String) {
     SELECT("Select", "সিলেক্ট"),
+    DIRECT_SELECT("Points", "অ্যাংকর"),
     PEN("Pen", "পেন টুল"),
+    CURVATURE("Curvature", "কার্ভ"),
     BRUSH("Brush", "ব্রাশ"),
     SHAPES("Shapes", "শেপ"),
     TEXT("Text", "টেক্সট"),
     IMAGE("Image", "ছবি"),
-    STICKER("Stickers", "স্টিকার"),
+    STICKER("Elements", "এলিমেন্ট"),
     COLOR("Color", "কালার"),
+    EFFECTS("Effects", "ইফেক্ট"),
     ERASER("Eraser", "ইরেজার"),
     ALIGN("Align", "এলাইন"),
     EYEDROPPER("Picker", "আইড্রপার"),
+    HAND("Hand", "হ্যান্ড"),
     ZOOM("Zoom", "জুম")
 }
 
 enum class ShapeType(val label: String) {
     RECTANGLE("Rectangle"),
-    CIRCLE("Circle"),
+    ROUNDED_RECT("Rounded Rect"),
+    CIRCLE("Ellipse"),
     TRIANGLE("Triangle"),
     LINE("Line"),
+    ARC("Arc"),
     STAR("Star"),
     POLYGON("Polygon")
 }
@@ -98,6 +104,17 @@ enum class BrushStyle(val label: String) {
     ROUND("Smooth Round"),
     CALLIGRAPHY("Calligraphy Nib"),
     MARKER("Bold Marker")
+}
+
+enum class GradientType(val label: String) {
+    LINEAR("Linear"),
+    RADIAL("Radial")
+}
+
+enum class StrokeStyle(val label: String) {
+    SOLID("Solid"),
+    DASHED("Dashed"),
+    DOTTED("Dotted")
 }
 
 enum class TextAlignMode(val label: String) {
@@ -136,6 +153,36 @@ data class PathPoint(
     val y: Float
 )
 
+data class LayerEffects(
+    val shadowEnabled: Boolean = false,
+    val shadowBlur: Float = 14f,
+    val shadowOffsetX: Float = 6f,
+    val shadowOffsetY: Float = 8f,
+    val shadowColor: Long = 0x88000000L,
+    val glowEnabled: Boolean = false,
+    val glowRadius: Float = 18f,
+    val glowColor: Long = 0xFFFF7A00L,
+    val blurRadius: Float = 0f,
+    val is3dEffect: Boolean = false,
+    val outlineWidth: Float = 0f,
+    val outlineColor: Long = 0xFFFFFFFFL
+)
+
+data class CanvasPage(
+    val id: String = UUID.randomUUID().toString(),
+    val name: String = "Page 1",
+    val artboardWidth: Int = 1080,
+    val artboardHeight: Int = 1080,
+    val targetExportWidth: Int = 1080,
+    val targetExportHeight: Int = 1080,
+    val backgroundColor: Long = 0xFFFFFFFFL,
+    val backgroundGradientMid: Long? = null,
+    val backgroundGradientEnd: Long? = null,
+    val backgroundGradientType: GradientType = GradientType.LINEAR,
+    val backgroundImagePath: String? = null,
+    val layers: List<LayerElement> = emptyList()
+)
+
 sealed interface LayerElement {
     val id: String
     val name: String
@@ -147,6 +194,10 @@ sealed interface LayerElement {
     val height: Float
     val rotation: Float
     val opacity: Float
+    val flipH: Boolean
+    val flipV: Boolean
+    val groupId: String?
+    val effects: LayerEffects
 
     fun withBase(
         name: String = this.name,
@@ -158,6 +209,13 @@ sealed interface LayerElement {
         height: Float = this.height,
         rotation: Float = this.rotation,
         opacity: Float = this.opacity
+    ): LayerElement
+
+    fun withExtras(
+        flipH: Boolean = this.flipH,
+        flipV: Boolean = this.flipV,
+        groupId: String? = this.groupId,
+        effects: LayerEffects = this.effects
     ): LayerElement
 
     fun duplicateWithNewId(): LayerElement
@@ -176,12 +234,20 @@ data class ShapeLayer(
     override val opacity: Float = 1f,
     val shapeType: ShapeType = ShapeType.RECTANGLE,
     val fillColor: Long = 0xFFFF7A00L,
+    val gradientMidColor: Long? = null,
     val gradientEndColor: Long? = null,
     val gradientAngle: Float = 45f,
+    val gradientType: GradientType = GradientType.LINEAR,
     val strokeColor: Long = 0x00000000L,
     val strokeWidth: Float = 0f,
+    val strokeStyle: StrokeStyle = StrokeStyle.SOLID,
     val cornerRadius: Float = 0f,
-    val polygonSides: Int = 6
+    val polygonSides: Int = 6,
+    val arcSweepAngle: Float = 260f,
+    override val flipH: Boolean = false,
+    override val flipV: Boolean = false,
+    override val groupId: String? = null,
+    override val effects: LayerEffects = LayerEffects()
 ) : LayerElement {
     override fun withBase(
         name: String, visible: Boolean, locked: Boolean,
@@ -190,6 +256,13 @@ data class ShapeLayer(
         name = name, visible = visible, locked = locked,
         x = x, y = y, width = width, height = height, rotation = rotation, opacity = opacity
     )
+
+    override fun withExtras(
+        flipH: Boolean,
+        flipV: Boolean,
+        groupId: String?,
+        effects: LayerEffects
+    ): LayerElement = copy(flipH = flipH, flipV = flipV, groupId = groupId, effects = effects)
 
     override fun duplicateWithNewId(): LayerElement =
         copy(id = UUID.randomUUID().toString(), name = "$name Copy", x = x + 30f, y = y + 30f)
@@ -209,10 +282,15 @@ data class PathLayer(
     val points: List<PathPoint> = emptyList(),
     val strokeColor: Long = 0xFF1E1E1EL,
     val strokeWidth: Float = 10f,
+    val strokeStyle: StrokeStyle = StrokeStyle.SOLID,
     val isPenSmooth: Boolean = true,
     val fillColor: Long? = null,
     val isClosed: Boolean = false,
-    val brushStyle: BrushStyle = BrushStyle.ROUND
+    val brushStyle: BrushStyle = BrushStyle.ROUND,
+    override val flipH: Boolean = false,
+    override val flipV: Boolean = false,
+    override val groupId: String? = null,
+    override val effects: LayerEffects = LayerEffects()
 ) : LayerElement {
     override fun withBase(
         name: String, visible: Boolean, locked: Boolean,
@@ -221,6 +299,13 @@ data class PathLayer(
         name = name, visible = visible, locked = locked,
         x = x, y = y, width = width, height = height, rotation = rotation, opacity = opacity
     )
+
+    override fun withExtras(
+        flipH: Boolean,
+        flipV: Boolean,
+        groupId: String?,
+        effects: LayerEffects
+    ): LayerElement = copy(flipH = flipH, flipV = flipV, groupId = groupId, effects = effects)
 
     override fun duplicateWithNewId(): LayerElement =
         copy(id = UUID.randomUUID().toString(), name = "$name Copy", x = x + 24f, y = y + 24f)
@@ -241,9 +326,17 @@ data class TextLayer(
     val fontId: String = "hind_siliguri",
     val fontSize: Float = 72f,
     val color: Long = 0xFF1E1E1EL,
+    val gradientMidColor: Long? = null,
     val gradientEndColor: Long? = null,
+    val gradientType: GradientType = GradientType.LINEAR,
+    val gradientAngle: Float = 0f,
     val bold: Boolean = false,
     val italic: Boolean = false,
+    val underline: Boolean = false,
+    val lineSpacing: Float = 1.15f,
+    val letterSpacing: Float = 0f,
+    val textBackgroundColor: Long? = null,
+    val curveAmount: Float = 0f, // -1f..1f arc curve
     val align: TextAlignMode = TextAlignMode.CENTER,
     val shadowEnabled: Boolean = false,
     val shadowColor: Long = 0x88000000L,
@@ -251,7 +344,11 @@ data class TextLayer(
     val shadowOffsetX: Float = 4f,
     val shadowOffsetY: Float = 4f,
     val strokeColor: Long = 0xFFFFFFFFL,
-    val strokeWidth: Float = 0f
+    val strokeWidth: Float = 0f,
+    override val flipH: Boolean = false,
+    override val flipV: Boolean = false,
+    override val groupId: String? = null,
+    override val effects: LayerEffects = LayerEffects()
 ) : LayerElement {
     override fun withBase(
         name: String, visible: Boolean, locked: Boolean,
@@ -260,6 +357,13 @@ data class TextLayer(
         name = name, visible = visible, locked = locked,
         x = x, y = y, width = width, height = height, rotation = rotation, opacity = opacity
     )
+
+    override fun withExtras(
+        flipH: Boolean,
+        flipV: Boolean,
+        groupId: String?,
+        effects: LayerEffects
+    ): LayerElement = copy(flipH = flipH, flipV = flipV, groupId = groupId, effects = effects)
 
     override fun duplicateWithNewId(): LayerElement =
         copy(id = UUID.randomUUID().toString(), name = "$name Copy", x = x + 28f, y = y + 28f)
@@ -282,7 +386,11 @@ data class ImageLayer(
     val cropTop: Float = 0f,
     val cropRight: Float = 1f,
     val cropBottom: Float = 1f,
-    val cornerRadiusRatio: Float = 0f
+    val cornerRadiusRatio: Float = 0f,
+    override val flipH: Boolean = false,
+    override val flipV: Boolean = false,
+    override val groupId: String? = null,
+    override val effects: LayerEffects = LayerEffects()
 ) : LayerElement {
     override fun withBase(
         name: String, visible: Boolean, locked: Boolean,
@@ -291,6 +399,13 @@ data class ImageLayer(
         name = name, visible = visible, locked = locked,
         x = x, y = y, width = width, height = height, rotation = rotation, opacity = opacity
     )
+
+    override fun withExtras(
+        flipH: Boolean,
+        flipV: Boolean,
+        groupId: String?,
+        effects: LayerEffects
+    ): LayerElement = copy(flipH = flipH, flipV = flipV, groupId = groupId, effects = effects)
 
     override fun duplicateWithNewId(): LayerElement =
         copy(id = UUID.randomUUID().toString(), name = "$name Copy", x = x + 30f, y = y + 30f)
@@ -309,7 +424,11 @@ data class StickerLayer(
     override val opacity: Float = 1f,
     val stickerId: String = "isl_crescent",
     val primaryColor: Long = 0xFFFF7A00L,
-    val secondaryColor: Long = 0xFF1E1E1EL
+    val secondaryColor: Long = 0xFF1E1E1EL,
+    override val flipH: Boolean = false,
+    override val flipV: Boolean = false,
+    override val groupId: String? = null,
+    override val effects: LayerEffects = LayerEffects()
 ) : LayerElement {
     override fun withBase(
         name: String, visible: Boolean, locked: Boolean,
@@ -318,6 +437,13 @@ data class StickerLayer(
         name = name, visible = visible, locked = locked,
         x = x, y = y, width = width, height = height, rotation = rotation, opacity = opacity
     )
+
+    override fun withExtras(
+        flipH: Boolean,
+        flipV: Boolean,
+        groupId: String?,
+        effects: LayerEffects
+    ): LayerElement = copy(flipH = flipH, flipV = flipV, groupId = groupId, effects = effects)
 
     override fun duplicateWithNewId(): LayerElement =
         copy(id = UUID.randomUUID().toString(), name = "$name Copy", x = x + 30f, y = y + 30f)
@@ -334,15 +460,73 @@ data class CanvasDocument(
     val smartModeLabel: String? = null,
     val dpi: Int = 300,
     val backgroundColor: Long = 0xFFFFFFFFL,
+    val backgroundGradientMid: Long? = null,
     val backgroundGradientEnd: Long? = null,
+    val backgroundGradientType: GradientType = GradientType.LINEAR,
+    val backgroundImagePath: String? = null,
     val layers: List<LayerElement> = emptyList(),
+    val pages: List<CanvasPage> = emptyList(),
+    val activePageIndex: Int = 0,
     val updatedAt: Long = System.currentTimeMillis()
 ) {
+    fun normalizedPages(): List<CanvasPage> {
+        if (pages.isEmpty()) {
+            return listOf(
+                CanvasPage(
+                    name = "Page 1",
+                    artboardWidth = artboardWidth,
+                    artboardHeight = artboardHeight,
+                    targetExportWidth = targetExportWidth,
+                    targetExportHeight = targetExportHeight,
+                    backgroundColor = backgroundColor,
+                    backgroundGradientMid = backgroundGradientMid,
+                    backgroundGradientEnd = backgroundGradientEnd,
+                    backgroundGradientType = backgroundGradientType,
+                    backgroundImagePath = backgroundImagePath,
+                    layers = layers
+                )
+            )
+        }
+        val safeIdx = activePageIndex.coerceIn(0, pages.lastIndex)
+        return pages.mapIndexed { idx, p ->
+            if (idx == safeIdx) {
+                p.copy(
+                    artboardWidth = artboardWidth,
+                    artboardHeight = artboardHeight,
+                    targetExportWidth = targetExportWidth,
+                    targetExportHeight = targetExportHeight,
+                    backgroundColor = backgroundColor,
+                    backgroundGradientMid = backgroundGradientMid,
+                    backgroundGradientEnd = backgroundGradientEnd,
+                    backgroundGradientType = backgroundGradientType,
+                    backgroundImagePath = backgroundImagePath,
+                    layers = layers
+                )
+            } else p
+        }
+    }
+
+    fun switchToPage(index: Int): CanvasDocument {
+        val allPages = normalizedPages()
+        val safeIdx = index.coerceIn(0, allPages.lastIndex)
+        val p = allPages[safeIdx]
+        return copy(
+            artboardWidth = p.artboardWidth,
+            artboardHeight = p.artboardHeight,
+            targetExportWidth = p.targetExportWidth,
+            targetExportHeight = p.targetExportHeight,
+            backgroundColor = p.backgroundColor,
+            backgroundGradientMid = p.backgroundGradientMid,
+            backgroundGradientEnd = p.backgroundGradientEnd,
+            backgroundGradientType = p.backgroundGradientType,
+            backgroundImagePath = p.backgroundImagePath,
+            layers = p.layers,
+            pages = allPages,
+            activePageIndex = safeIdx
+        )
+    }
+
     companion object {
-        /**
-         * Smart Mode: Keeps interactive canvas responsive (max edge <= 1440px, min edge >= 120px)
-         * while preserving exact aspect ratio and storing true 300 DPI target dimensions for export.
-         */
         fun createSmart(
             name: String,
             targetWidthPx: Int,

@@ -9,6 +9,7 @@ import android.util.LruCache
 import com.example.model.*
 import com.example.ui.theme.FontCatalog
 import java.io.File
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
@@ -64,6 +65,54 @@ object CanvasRenderer {
         }
     }
 
+    private fun buildShader(
+        startColor: Int,
+        midColor: Int?,
+        endColor: Int,
+        width: Float,
+        height: Float,
+        angle: Float,
+        type: GradientType
+    ): Shader {
+        val colors = if (midColor != null) intArrayOf(startColor, midColor, endColor) else intArrayOf(startColor, endColor)
+        return if (type == GradientType.RADIAL) {
+            RadialGradient(
+                width / 2f,
+                height / 2f,
+                max(10f, max(width, height) * 0.65f),
+                colors,
+                null,
+                Shader.TileMode.CLAMP
+            )
+        } else {
+            val rad = Math.toRadians(angle.toDouble())
+            val cx = width / 2f
+            val cy = height / 2f
+            val halfSpan = max(width, height) / 2f
+            val dx = cos(rad).toFloat() * halfSpan
+            val dy = sin(rad).toFloat() * halfSpan
+            LinearGradient(
+                cx - dx, cy - dy,
+                cx + dx, cy + dy,
+                colors,
+                null,
+                Shader.TileMode.CLAMP
+            )
+        }
+    }
+
+    private fun applyStrokeEffect(paint: Paint, strokeWidth: Float, style: StrokeStyle) {
+        val base = max(4f, strokeWidth)
+        paint.pathEffect = when (style) {
+            StrokeStyle.SOLID -> null
+            StrokeStyle.DASHED -> DashPathEffect(floatArrayOf(base * 2.4f, base * 1.4f), 0f)
+            StrokeStyle.DOTTED -> DashPathEffect(floatArrayOf(base * 0.3f, base * 1.6f), 0f)
+        }
+        if (style == StrokeStyle.DOTTED) {
+            paint.strokeCap = Paint.Cap.ROUND
+        }
+    }
+
     fun renderDocument(
         context: Context,
         canvas: Canvas,
@@ -78,22 +127,33 @@ object CanvasRenderer {
         val w = document.artboardWidth.toFloat()
         val h = document.artboardHeight.toFloat()
 
-        // Clip to artboard bounds
         canvas.clipRect(0f, 0f, w, h)
 
         if (!transparentBackground) {
             val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
             if (document.backgroundGradientEnd != null) {
-                bgPaint.shader = LinearGradient(
-                    0f, 0f, w, h,
-                    document.backgroundColor.toInt(),
-                    document.backgroundGradientEnd.toInt(),
-                    Shader.TileMode.CLAMP
+                bgPaint.shader = buildShader(
+                    startColor = document.backgroundColor.toInt(),
+                    midColor = document.backgroundGradientMid?.toInt(),
+                    endColor = document.backgroundGradientEnd.toInt(),
+                    width = w,
+                    height = h,
+                    angle = 45f,
+                    type = document.backgroundGradientType
                 )
             } else {
                 bgPaint.color = document.backgroundColor.toInt()
             }
             canvas.drawRect(0f, 0f, w, h, bgPaint)
+
+            val bgImgPath = document.backgroundImagePath
+            if (!bgImgPath.isNullOrBlank()) {
+                val bgBmp = loadCachedBitmap(bgImgPath)
+                if (bgBmp != null) {
+                    val bmpPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+                    canvas.drawBitmap(bgBmp, null, RectF(0f, 0f, w, h), bmpPaint)
+                }
+            }
         }
 
         document.layers.forEach { layer ->
@@ -114,40 +174,125 @@ object CanvasRenderer {
             canvas.rotate(layer.rotation, cx, cy)
         }
         canvas.translate(layer.x, layer.y)
-
-        when (layer) {
-            is ShapeLayer -> drawShapeLayer(canvas, layer, alphaInt)
-            is PathLayer -> drawPathLayer(canvas, layer, alphaInt)
-            is TextLayer -> drawTextLayer(context, canvas, layer, alphaInt)
-            is ImageLayer -> drawImageLayer(canvas, layer, alphaInt)
-            is StickerLayer -> StickerRenderer.drawSticker(
-                context = context,
-                canvas = canvas,
-                stickerId = layer.stickerId,
-                width = layer.width,
-                height = layer.height,
-                primaryColor = layer.primaryColor.toInt(),
-                secondaryColor = layer.secondaryColor.toInt(),
-                alpha = alphaInt
+        if (layer.flipH || layer.flipV) {
+            canvas.scale(
+                if (layer.flipH) -1f else 1f,
+                if (layer.flipV) -1f else 1f,
+                layer.width / 2f,
+                layer.height / 2f
             )
         }
+
+        // Optional 3D extrusion pass for depth effect
+        if (layer.effects.is3dEffect) {
+            val steps = 5
+            for (step in steps downTo 1) {
+                canvas.save()
+                canvas.translate(step * 2.5f, step * 2.5f)
+                drawLayerContent(context, canvas, layer, (alphaInt * 0.28f).toInt(), shadowOverrideColor = 0xFF2B2B2EL.toInt())
+                canvas.restore()
+            }
+        }
+
+        drawLayerContent(context, canvas, layer, alphaInt, shadowOverrideColor = null)
         canvas.restore()
     }
 
-    private fun drawShapeLayer(canvas: Canvas, layer: ShapeLayer, alphaInt: Int) {
+    private fun drawLayerContent(
+        context: Context,
+        canvas: Canvas,
+        layer: LayerElement,
+        alphaInt: Int,
+        shadowOverrideColor: Int?
+    ) {
+        when (layer) {
+            is ShapeLayer -> drawShapeLayer(canvas, layer, alphaInt, shadowOverrideColor)
+            is PathLayer -> drawPathLayer(canvas, layer, alphaInt, shadowOverrideColor)
+            is TextLayer -> drawTextLayer(context, canvas, layer, alphaInt, shadowOverrideColor)
+            is ImageLayer -> drawImageLayer(canvas, layer, alphaInt)
+            is StickerLayer -> {
+                if (layer.effects.glowEnabled) {
+                    canvas.save()
+                    canvas.scale(1.03f, 1.03f, layer.width / 2f, layer.height / 2f)
+                    StickerRenderer.drawSticker(
+                        context = context,
+                        canvas = canvas,
+                        stickerId = layer.stickerId,
+                        width = layer.width,
+                        height = layer.height,
+                        primaryColor = layer.effects.glowColor.toInt(),
+                        secondaryColor = layer.effects.glowColor.toInt(),
+                        alpha = (alphaInt * 0.45f).toInt()
+                    )
+                    canvas.restore()
+                }
+                if (layer.effects.shadowEnabled && shadowOverrideColor == null) {
+                    canvas.save()
+                    canvas.translate(layer.effects.shadowOffsetX, layer.effects.shadowOffsetY)
+                    StickerRenderer.drawSticker(
+                        context = context,
+                        canvas = canvas,
+                        stickerId = layer.stickerId,
+                        width = layer.width,
+                        height = layer.height,
+                        primaryColor = layer.effects.shadowColor.toInt(),
+                        secondaryColor = layer.effects.shadowColor.toInt(),
+                        alpha = (alphaInt * 0.42f).toInt()
+                    )
+                    canvas.restore()
+                }
+                StickerRenderer.drawSticker(
+                    context = context,
+                    canvas = canvas,
+                    stickerId = layer.stickerId,
+                    width = layer.width,
+                    height = layer.height,
+                    primaryColor = shadowOverrideColor ?: layer.primaryColor.toInt(),
+                    secondaryColor = shadowOverrideColor ?: layer.secondaryColor.toInt(),
+                    alpha = alphaInt
+                )
+            }
+        }
+    }
+
+    private fun configureEffectsPaint(paint: Paint, effects: LayerEffects) {
+        if (effects.blurRadius > 0.5f) {
+            paint.maskFilter = BlurMaskFilter(effects.blurRadius.coerceAtMost(40f), BlurMaskFilter.Blur.NORMAL)
+        } else if (effects.glowEnabled) {
+            paint.maskFilter = BlurMaskFilter(effects.glowRadius.coerceIn(2f, 40f), BlurMaskFilter.Blur.SOLID)
+            paint.setShadowLayer(effects.glowRadius, 0f, 0f, effects.glowColor.toInt())
+        } else if (effects.shadowEnabled) {
+            paint.setShadowLayer(
+                effects.shadowBlur.coerceAtLeast(1f),
+                effects.shadowOffsetX,
+                effects.shadowOffsetY,
+                effects.shadowColor.toInt()
+            )
+        }
+    }
+
+    private fun drawShapeLayer(
+        canvas: Canvas,
+        layer: ShapeLayer,
+        alphaInt: Int,
+        shadowOverrideColor: Int?
+    ) {
         val w = layer.width
         val h = layer.height
         val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.FILL
-            if (layer.gradientEndColor != null) {
-                val rad = Math.toRadians(layer.gradientAngle.toDouble())
-                val dx = cos(rad).toFloat() * w
-                val dy = sin(rad).toFloat() * h
-                shader = LinearGradient(
-                    0f, 0f, dx, dy,
-                    layer.fillColor.toInt(),
-                    layer.gradientEndColor.toInt(),
-                    Shader.TileMode.CLAMP
+            if (shadowOverrideColor != null) {
+                color = shadowOverrideColor
+                alpha = alphaInt
+            } else if (layer.gradientEndColor != null) {
+                shader = buildShader(
+                    startColor = layer.fillColor.toInt(),
+                    midColor = layer.gradientMidColor?.toInt(),
+                    endColor = layer.gradientEndColor.toInt(),
+                    width = w,
+                    height = h,
+                    angle = layer.gradientAngle,
+                    type = layer.gradientType
                 )
                 alpha = alphaInt
             } else {
@@ -156,29 +301,60 @@ object CanvasRenderer {
                 val origA = android.graphics.Color.alpha(baseColor)
                 alpha = (origA * (alphaInt / 255f)).toInt()
             }
+            if (shadowOverrideColor == null) configureEffectsPaint(this, layer.effects)
         }
 
         val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
-            color = layer.strokeColor.toInt()
+            color = shadowOverrideColor ?: layer.strokeColor.toInt()
             strokeWidth = layer.strokeWidth
+            strokeJoin = Paint.Join.ROUND
             val origA = android.graphics.Color.alpha(layer.strokeColor.toInt())
             alpha = (origA * (alphaInt / 255f)).toInt()
+            applyStrokeEffect(this, layer.strokeWidth, layer.strokeStyle)
         }
+
+        val outlineEffectPaint = if (layer.effects.outlineWidth > 0f && shadowOverrideColor == null) {
+            Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.STROKE
+                color = layer.effects.outlineColor.toInt()
+                strokeWidth = layer.effects.outlineWidth
+                strokeJoin = Paint.Join.ROUND
+                alpha = alphaInt
+            }
+        } else null
 
         val hasFill = android.graphics.Color.alpha(layer.fillColor.toInt()) > 0 || layer.gradientEndColor != null
         val hasStroke = layer.strokeWidth > 0f && android.graphics.Color.alpha(layer.strokeColor.toInt()) > 0
 
         when (layer.shapeType) {
-            ShapeType.RECTANGLE -> {
+            ShapeType.RECTANGLE, ShapeType.ROUNDED_RECT -> {
                 val rect = RectF(0f, 0f, w, h)
-                if (hasFill) canvas.drawRoundRect(rect, layer.cornerRadius, layer.cornerRadius, fillPaint)
-                if (hasStroke) canvas.drawRoundRect(rect, layer.cornerRadius, layer.cornerRadius, strokePaint)
+                val rad = if (layer.shapeType == ShapeType.ROUNDED_RECT && layer.cornerRadius <= 0f) {
+                    min(w, h) * 0.16f
+                } else layer.cornerRadius
+                if (hasFill) canvas.drawRoundRect(rect, rad, rad, fillPaint)
+                if (hasStroke) canvas.drawRoundRect(rect, rad, rad, strokePaint)
+                if (outlineEffectPaint != null) canvas.drawRoundRect(rect, rad, rad, outlineEffectPaint)
             }
             ShapeType.CIRCLE -> {
                 val rect = RectF(0f, 0f, w, h)
                 if (hasFill) canvas.drawOval(rect, fillPaint)
                 if (hasStroke) canvas.drawOval(rect, strokePaint)
+                if (outlineEffectPaint != null) canvas.drawOval(rect, outlineEffectPaint)
+            }
+            ShapeType.ARC -> {
+                val rect = RectF(4f, 4f, max(8f, w - 4f), max(8f, h - 4f))
+                val arcPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    color = shadowOverrideColor ?: if (hasStroke) layer.strokeColor.toInt() else layer.fillColor.toInt()
+                    strokeWidth = max(10f, layer.strokeWidth)
+                    strokeCap = Paint.Cap.ROUND
+                    alpha = alphaInt
+                    applyStrokeEffect(this, strokeWidth, layer.strokeStyle)
+                    if (shadowOverrideColor == null) configureEffectsPaint(this, layer.effects)
+                }
+                canvas.drawArc(rect, -135f, layer.arcSweepAngle, false, arcPaint)
             }
             ShapeType.TRIANGLE -> {
                 val p = Path().apply {
@@ -189,14 +365,17 @@ object CanvasRenderer {
                 }
                 if (hasFill) canvas.drawPath(p, fillPaint)
                 if (hasStroke) canvas.drawPath(p, strokePaint)
+                if (outlineEffectPaint != null) canvas.drawPath(p, outlineEffectPaint)
             }
             ShapeType.LINE -> {
                 val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     style = Paint.Style.STROKE
-                    color = if (hasFill) layer.fillColor.toInt() else layer.strokeColor.toInt()
+                    color = shadowOverrideColor ?: if (hasFill) layer.fillColor.toInt() else layer.strokeColor.toInt()
                     strokeWidth = max(6f, layer.strokeWidth)
                     strokeCap = Paint.Cap.ROUND
                     alpha = alphaInt
+                    applyStrokeEffect(this, strokeWidth, layer.strokeStyle)
+                    if (shadowOverrideColor == null) configureEffectsPaint(this, layer.effects)
                 }
                 canvas.drawLine(0f, h / 2f, w, h / 2f, linePaint)
             }
@@ -204,37 +383,60 @@ object CanvasRenderer {
                 val r = min(w, h) / 2f
                 if (hasFill) StickerRenderer.drawStarPolygon(canvas, w / 2f, h / 2f, r, r * 0.45f, 5, fillPaint)
                 if (hasStroke) StickerRenderer.drawStarPolygon(canvas, w / 2f, h / 2f, r, r * 0.45f, 5, strokePaint)
+                if (outlineEffectPaint != null) StickerRenderer.drawStarPolygon(canvas, w / 2f, h / 2f, r, r * 0.45f, 5, outlineEffectPaint)
             }
             ShapeType.POLYGON -> {
                 val r = min(w, h) / 2f
                 if (hasFill) StickerRenderer.drawRegularPolygon(canvas, w / 2f, h / 2f, r, layer.polygonSides, fillPaint)
                 if (hasStroke) StickerRenderer.drawRegularPolygon(canvas, w / 2f, h / 2f, r, layer.polygonSides, strokePaint)
+                if (outlineEffectPaint != null) StickerRenderer.drawRegularPolygon(canvas, w / 2f, h / 2f, r, layer.polygonSides, outlineEffectPaint)
             }
         }
     }
 
-    private fun drawPathLayer(canvas: Canvas, layer: PathLayer, alphaInt: Int) {
+    private fun drawPathLayer(
+        canvas: Canvas,
+        layer: PathLayer,
+        alphaInt: Int,
+        shadowOverrideColor: Int?
+    ) {
         if (layer.points.size < 2) return
         val path = buildSmoothPath(layer.points, layer.isPenSmooth, layer.isClosed)
 
         if (layer.fillColor != null) {
             val fp = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 style = Paint.Style.FILL
-                color = layer.fillColor.toInt()
+                color = shadowOverrideColor ?: layer.fillColor.toInt()
                 alpha = alphaInt
+                if (shadowOverrideColor == null) configureEffectsPaint(this, layer.effects)
             }
             canvas.drawPath(path, fp)
         }
 
         val sp = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
-            color = layer.strokeColor.toInt()
+            color = shadowOverrideColor ?: layer.strokeColor.toInt()
             strokeWidth = layer.strokeWidth
             strokeCap = if (layer.brushStyle == BrushStyle.MARKER) Paint.Cap.SQUARE else Paint.Cap.ROUND
             strokeJoin = Paint.Join.ROUND
             alpha = alphaInt
+            applyStrokeEffect(this, layer.strokeWidth, layer.strokeStyle)
+            if (shadowOverrideColor == null) configureEffectsPaint(this, layer.effects)
         }
         canvas.drawPath(path, sp)
+
+        if (layer.effects.outlineWidth > 0f && shadowOverrideColor == null) {
+            val op = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.STROKE
+                color = layer.effects.outlineColor.toInt()
+                strokeWidth = layer.strokeWidth + layer.effects.outlineWidth
+                strokeCap = Paint.Cap.ROUND
+                strokeJoin = Paint.Join.ROUND
+                alpha = (alphaInt * 0.65f).toInt()
+            }
+            canvas.drawPath(path, op)
+            canvas.drawPath(path, sp)
+        }
     }
 
     fun buildSmoothPath(points: List<PathPoint>, smooth: Boolean, closed: Boolean): Path {
@@ -258,11 +460,95 @@ object CanvasRenderer {
         return path
     }
 
-    private fun drawTextLayer(context: Context, canvas: Canvas, layer: TextLayer, alphaInt: Int) {
+    private fun drawTextLayer(
+        context: Context,
+        canvas: Canvas,
+        layer: TextLayer,
+        alphaInt: Int,
+        shadowOverrideColor: Int?
+    ) {
         val fontOpt = FontCatalog.findById(layer.fontId)
         val baseTypeface = FontCatalog.getBaseTypeface(context, fontOpt)
         val effectiveBold = layer.bold || fontOpt.defaultBold
         val effectiveItalic = layer.italic || fontOpt.defaultItalic
+        val effectiveLetterSpacing = fontOpt.letterSpacingEm + layer.letterSpacing
+
+        if (layer.textBackgroundColor != null && shadowOverrideColor == null) {
+            val bgP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = layer.textBackgroundColor.toInt()
+                alpha = alphaInt
+            }
+            canvas.drawRoundRect(
+                RectF(-12f, -8f, layer.width + 12f, layer.height + 8f),
+                16f, 16f, bgP
+            )
+        }
+
+        // Curved Text rendering along an arc path when curveAmount != 0
+        if (abs(layer.curveAmount) > 0.02f) {
+            val arcPath = Path().apply {
+                val bend = layer.curveAmount * layer.height * 0.85f
+                val midY = layer.height / 2f
+                moveTo(0f, midY + bend * 0.4f)
+                quadTo(layer.width / 2f, midY - bend, layer.width, midY + bend * 0.4f)
+            }
+            if (layer.strokeWidth > 0f && shadowOverrideColor == null) {
+                val stp = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+                    typeface = baseTypeface
+                    isFakeBoldText = effectiveBold
+                    textSkewX = if (effectiveItalic) -0.22f else 0f
+                    isUnderlineText = layer.underline
+                    textSize = layer.fontSize
+                    style = Paint.Style.STROKE
+                    strokeWidth = layer.strokeWidth
+                    strokeJoin = Paint.Join.ROUND
+                    color = layer.strokeColor.toInt()
+                    letterSpacing = effectiveLetterSpacing
+                    textAlign = Paint.Align.CENTER
+                    alpha = alphaInt
+                }
+                canvas.drawTextOnPath(layer.text, arcPath, 0f, layer.fontSize * 0.25f, stp)
+            }
+            val ftp = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+                typeface = baseTypeface
+                isFakeBoldText = effectiveBold
+                textSkewX = if (effectiveItalic) -0.22f else 0f
+                isUnderlineText = layer.underline
+                textSize = layer.fontSize
+                letterSpacing = effectiveLetterSpacing
+                textAlign = Paint.Align.CENTER
+                if (shadowOverrideColor != null) {
+                    color = shadowOverrideColor
+                } else if (layer.gradientEndColor != null) {
+                    shader = buildShader(
+                        startColor = layer.color.toInt(),
+                        midColor = layer.gradientMidColor?.toInt(),
+                        endColor = layer.gradientEndColor.toInt(),
+                        width = layer.width,
+                        height = layer.height,
+                        angle = layer.gradientAngle,
+                        type = layer.gradientType
+                    )
+                } else {
+                    color = layer.color.toInt()
+                }
+                alpha = alphaInt
+                if (shadowOverrideColor == null) {
+                    if (layer.shadowEnabled || layer.effects.shadowEnabled) {
+                        val sRadius = if (layer.effects.shadowEnabled) layer.effects.shadowBlur else layer.shadowRadius
+                        val sx = if (layer.effects.shadowEnabled) layer.effects.shadowOffsetX else layer.shadowOffsetX
+                        val sy = if (layer.effects.shadowEnabled) layer.effects.shadowOffsetY else layer.shadowOffsetY
+                        val sc = if (layer.effects.shadowEnabled) layer.effects.shadowColor else layer.shadowColor
+                        setShadowLayer(sRadius, sx, sy, sc.toInt())
+                    } else if (layer.effects.glowEnabled) {
+                        setShadowLayer(layer.effects.glowRadius, 0f, 0f, layer.effects.glowColor.toInt())
+                    }
+                }
+            }
+            canvas.drawTextOnPath(layer.text, arcPath, 0f, layer.fontSize * 0.25f, ftp)
+            return
+        }
+
         val alignment = when (layer.align) {
             TextAlignMode.LEFT -> Layout.Alignment.ALIGN_NORMAL
             TextAlignMode.CENTER -> Layout.Alignment.ALIGN_CENTER
@@ -270,63 +556,85 @@ object CanvasRenderer {
         }
 
         val layoutW = max(20, layer.width.toInt())
+        val effectiveStroke = if (layer.strokeWidth > 0f) layer.strokeWidth else layer.effects.outlineWidth
+        val effectiveStrokeCol = if (layer.strokeWidth > 0f) layer.strokeColor else layer.effects.outlineColor
 
-        if (layer.strokeWidth > 0f) {
-            val strokeKey = "s|${layer.text}|${layer.fontId}|${layer.fontSize}|$layoutW|${layer.align}|$effectiveBold|$effectiveItalic|${layer.strokeWidth}|${layer.strokeColor}|$alphaInt"
+        if (effectiveStroke > 0f && shadowOverrideColor == null) {
+            val strokeKey = "s|${layer.text}|${layer.fontId}|${layer.fontSize}|$layoutW|${layer.align}|$effectiveBold|$effectiveItalic|${layer.underline}|${layer.lineSpacing}|$effectiveLetterSpacing|$effectiveStroke|$effectiveStrokeCol|$alphaInt"
             val strokeLayout = textLayoutCache.get(strokeKey) ?: run {
                 val strokeTp = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
                     this.typeface = baseTypeface
                     isFakeBoldText = effectiveBold
                     textSkewX = if (effectiveItalic) -0.22f else 0f
+                    isUnderlineText = layer.underline
                     textSize = layer.fontSize
                     style = Paint.Style.STROKE
-                    strokeWidth = layer.strokeWidth
+                    strokeWidth = effectiveStroke
                     strokeJoin = Paint.Join.ROUND
-                    color = layer.strokeColor.toInt()
-                    letterSpacing = fontOpt.letterSpacingEm
+                    color = effectiveStrokeCol.toInt()
+                    letterSpacing = effectiveLetterSpacing
                     alpha = alphaInt
                 }
                 StaticLayout.Builder.obtain(
                     layer.text, 0, layer.text.length, strokeTp, layoutW
-                ).setAlignment(alignment).setIncludePad(false).build().also {
-                    textLayoutCache.put(strokeKey, it)
-                }
+                ).setAlignment(alignment)
+                    .setLineSpacing(0f, layer.lineSpacing.coerceIn(0.6f, 2.5f))
+                    .setIncludePad(false)
+                    .build().also {
+                        textLayoutCache.put(strokeKey, it)
+                    }
             }
             strokeLayout.draw(canvas)
         }
 
-        val fillKey = "f|${layer.text}|${layer.fontId}|${layer.fontSize}|$layoutW|${layer.height.toInt()}|${layer.align}|$effectiveBold|$effectiveItalic|${layer.color}|${layer.gradientEndColor}|${layer.shadowEnabled}|$alphaInt"
+        val fillKey = "f|${layer.text}|${layer.fontId}|${layer.fontSize}|$layoutW|${layer.height.toInt()}|${layer.align}|$effectiveBold|$effectiveItalic|${layer.underline}|${layer.lineSpacing}|$effectiveLetterSpacing|${layer.color}|${layer.gradientMidColor}|${layer.gradientEndColor}|${layer.gradientType}|${layer.shadowEnabled}|${layer.effects}|$shadowOverrideColor|$alphaInt"
         val layout = textLayoutCache.get(fillKey) ?: run {
             val tp = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
                 this.typeface = baseTypeface
                 isFakeBoldText = effectiveBold
                 textSkewX = if (effectiveItalic) -0.22f else 0f
+                isUnderlineText = layer.underline
                 textSize = layer.fontSize
-                letterSpacing = fontOpt.letterSpacingEm
-                if (layer.gradientEndColor != null) {
-                    shader = LinearGradient(
-                        0f, 0f, layer.width, layer.height,
-                        layer.color.toInt(), layer.gradientEndColor.toInt(),
-                        Shader.TileMode.CLAMP
+                letterSpacing = effectiveLetterSpacing
+                if (shadowOverrideColor != null) {
+                    color = shadowOverrideColor
+                } else if (layer.gradientEndColor != null) {
+                    shader = buildShader(
+                        startColor = layer.color.toInt(),
+                        midColor = layer.gradientMidColor?.toInt(),
+                        endColor = layer.gradientEndColor.toInt(),
+                        width = layer.width,
+                        height = layer.height,
+                        angle = layer.gradientAngle,
+                        type = layer.gradientType
                     )
                 } else {
                     color = layer.color.toInt()
                 }
                 alpha = alphaInt
-                if (layer.shadowEnabled) {
-                    setShadowLayer(
-                        layer.shadowRadius,
-                        layer.shadowOffsetX,
-                        layer.shadowOffsetY,
-                        layer.shadowColor.toInt()
-                    )
+                if (shadowOverrideColor == null) {
+                    if (layer.shadowEnabled || layer.effects.shadowEnabled) {
+                        val sRadius = if (layer.effects.shadowEnabled) layer.effects.shadowBlur else layer.shadowRadius
+                        val sx = if (layer.effects.shadowEnabled) layer.effects.shadowOffsetX else layer.shadowOffsetX
+                        val sy = if (layer.effects.shadowEnabled) layer.effects.shadowOffsetY else layer.shadowOffsetY
+                        val sc = if (layer.effects.shadowEnabled) layer.effects.shadowColor else layer.shadowColor
+                        setShadowLayer(max(1f, sRadius), sx, sy, sc.toInt())
+                    } else if (layer.effects.glowEnabled) {
+                        setShadowLayer(max(2f, layer.effects.glowRadius), 0f, 0f, layer.effects.glowColor.toInt())
+                    }
+                    if (layer.effects.blurRadius > 0.5f) {
+                        maskFilter = BlurMaskFilter(layer.effects.blurRadius.coerceAtMost(32f), BlurMaskFilter.Blur.NORMAL)
+                    }
                 }
             }
             StaticLayout.Builder.obtain(
                 layer.text, 0, layer.text.length, tp, layoutW
-            ).setAlignment(alignment).setIncludePad(false).build().also {
-                textLayoutCache.put(fillKey, it)
-            }
+            ).setAlignment(alignment)
+                .setLineSpacing(0f, layer.lineSpacing.coerceIn(0.6f, 2.5f))
+                .setIncludePad(false)
+                .build().also {
+                    textLayoutCache.put(fillKey, it)
+                }
         }
         layout.draw(canvas)
     }
@@ -340,8 +648,29 @@ object CanvasRenderer {
 
         val srcRect = Rect(srcLeft, srcTop, srcRight, srcBottom)
         val dstRect = RectF(0f, 0f, layer.width, layer.height)
+
+        if (layer.effects.shadowEnabled) {
+            val sp = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = layer.effects.shadowColor.toInt()
+                alpha = (alphaInt * 0.45f).toInt()
+                maskFilter = BlurMaskFilter(max(2f, layer.effects.shadowBlur), BlurMaskFilter.Blur.NORMAL)
+            }
+            canvas.drawRect(
+                RectF(
+                    layer.effects.shadowOffsetX,
+                    layer.effects.shadowOffsetY,
+                    layer.width + layer.effects.shadowOffsetX,
+                    layer.height + layer.effects.shadowOffsetY
+                ),
+                sp
+            )
+        }
+
         val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG or Paint.DITHER_FLAG).apply {
             alpha = alphaInt
+            if (layer.effects.blurRadius > 0.5f) {
+                maskFilter = BlurMaskFilter(layer.effects.blurRadius.coerceAtMost(24f), BlurMaskFilter.Blur.NORMAL)
+            }
         }
         if (layer.cornerRadiusRatio > 0.001f) {
             canvas.save()
@@ -356,6 +685,16 @@ object CanvasRenderer {
             canvas.restore()
         } else {
             canvas.drawBitmap(bmp, srcRect, dstRect, paint)
+        }
+
+        if (layer.effects.outlineWidth > 0f) {
+            val op = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.STROKE
+                color = layer.effects.outlineColor.toInt()
+                strokeWidth = layer.effects.outlineWidth
+                alpha = alphaInt
+            }
+            canvas.drawRect(dstRect, op)
         }
     }
 
@@ -372,7 +711,7 @@ object CanvasRenderer {
     fun resolveSafeExportDimensions(targetWidth: Int, targetHeight: Int): Pair<Int, Int> {
         var w = targetWidth.coerceIn(50, 20000)
         var h = targetHeight.coerceIn(50, 20000)
-        val maxPixels = 8192L * 4608L // ~37.7MP safe ceiling
+        val maxPixels = 8192L * 4608L
         if (w.toLong() * h.toLong() > maxPixels) {
             val factor = kotlin.math.sqrt(maxPixels.toDouble() / (w.toLong() * h.toLong()).toDouble()).toFloat()
             w = max(1, (w * factor).toInt())
@@ -403,9 +742,7 @@ object CanvasRenderer {
         val bmp = try {
             Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         } catch (_: OutOfMemoryError) {
-            val fallbackW = max(1, w / 2)
-            val fallbackH = max(1, h / 2)
-            Bitmap.createBitmap(fallbackW, fallbackH, Bitmap.Config.ARGB_8888)
+            Bitmap.createBitmap(max(1, w / 2), max(1, h / 2), Bitmap.Config.ARGB_8888)
         }
         val actualScaleX = bmp.width.toFloat() / doc.artboardWidth.toFloat()
         val actualScaleY = bmp.height.toFloat() / doc.artboardHeight.toFloat()
@@ -434,11 +771,14 @@ object CanvasRenderer {
         if (!transparentBackground) {
             val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
             if (doc.backgroundGradientEnd != null) {
-                bgPaint.shader = LinearGradient(
-                    0f, 0f, bmp.width.toFloat(), bmp.height.toFloat(),
-                    doc.backgroundColor.toInt(),
-                    doc.backgroundGradientEnd.toInt(),
-                    Shader.TileMode.CLAMP
+                bgPaint.shader = buildShader(
+                    startColor = doc.backgroundColor.toInt(),
+                    midColor = doc.backgroundGradientMid?.toInt(),
+                    endColor = doc.backgroundGradientEnd.toInt(),
+                    width = bmp.width.toFloat(),
+                    height = bmp.height.toFloat(),
+                    angle = 45f,
+                    type = doc.backgroundGradientType
                 )
             } else {
                 bgPaint.color = doc.backgroundColor.toInt()

@@ -29,9 +29,13 @@ data class EditorUiState(
     val activeTool: ToolMode = ToolMode.SELECT,
     val activeShapeType: ShapeType = ShapeType.RECTANGLE,
     val activeColor: Long = 0xFFFF7A00L,
+    val activeGradientMid: Long? = null,
     val activeGradientEnd: Long? = null,
+    val activeGradientType: GradientType = GradientType.LINEAR,
+    val activeGradientAngle: Float = 45f,
     val activeStrokeColor: Long = 0xFF1E1E1EL,
     val activeStrokeWidth: Float = 0f,
+    val activeStrokeStyle: StrokeStyle = StrokeStyle.SOLID,
     val activeCornerRadius: Float = 16f,
     val brushSize: Float = 18f,
     val brushOpacity: Float = 1f,
@@ -179,6 +183,12 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun renameProject(projectId: String, newName: String) {
+        viewModelScope.launch {
+            projectRepo.renameProject(projectId, newName)
+        }
+    }
+
     fun deleteProject(projectId: String) {
         viewModelScope.launch {
             projectRepo.deleteProject(projectId)
@@ -199,13 +209,14 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         undoStack.clear()
         redoStack.clear()
         val prefs = preferences.value
+        val normalized = doc.copy(pages = doc.normalizedPages())
         _editorState.value = EditorUiState(
             isOpen = true,
-            document = doc,
+            document = normalized,
             showGrid = prefs.showGridDefault,
             showRuler = prefs.showRulerDefault,
             snapToGrid = prefs.snapToGridDefault,
-            lastSavedAt = doc.updatedAt
+            lastSavedAt = normalized.updatedAt
         )
         startAutoSaveLoop()
     }
@@ -223,7 +234,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         autoSaveJob?.cancel()
         autoSaveJob = viewModelScope.launch {
             while (true) {
-                delay(30_000L) // Every 30 seconds auto-save
+                delay(30_000L)
                 if (_editorState.value.isOpen && preferences.value.autoSaveEnabled) {
                     saveCurrentProject(silent = true)
                 }
@@ -252,8 +263,9 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
 
     // Undo / Redo (up to 100 steps)
     private fun pushHistoryAndUpdate(newDoc: CanvasDocument, newSelection: String? = _editorState.value.selectedLayerId) {
+        val synced = newDoc.copy(pages = newDoc.normalizedPages())
         val current = _editorState.value.document
-        if (current != newDoc) {
+        if (current != synced) {
             undoStack.addLast(current)
             while (undoStack.size > 100) {
                 undoStack.removeFirst()
@@ -262,7 +274,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         }
         _editorState.update {
             it.copy(
-                document = newDoc,
+                document = synced,
                 selectedLayerId = newSelection,
                 canUndo = undoStack.isNotEmpty(),
                 canRedo = redoStack.isNotEmpty(),
@@ -333,43 +345,166 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         )
     }
 
-    fun setArtboardBackground(color: Long, gradientEnd: Long? = null) {
+    fun setArtboardBackground(
+        color: Long,
+        gradientEnd: Long? = null,
+        gradientMid: Long? = null,
+        gradientType: GradientType = GradientType.LINEAR
+    ) {
         val doc = _editorState.value.document
-        pushHistoryAndUpdate(doc.copy(backgroundColor = color, backgroundGradientEnd = gradientEnd))
+        pushHistoryAndUpdate(
+            doc.copy(
+                backgroundColor = color,
+                backgroundGradientMid = gradientMid,
+                backgroundGradientEnd = gradientEnd,
+                backgroundGradientType = gradientType
+            )
+        )
         viewModelScope.launch { prefsRepo.addRecentColor(color) }
     }
 
-    fun setActiveColor(color: Long, gradientEnd: Long? = null) {
-        _editorState.update { it.copy(activeColor = color, activeGradientEnd = gradientEnd) }
+    fun setArtboardBackgroundImage(uri: Uri?) {
+        if (uri == null) {
+            val doc = _editorState.value.document
+            pushHistoryAndUpdate(doc.copy(backgroundImagePath = null))
+            return
+        }
+        viewModelScope.launch {
+            _editorState.update { it.copy(isProcessingImage = true) }
+            val imported = projectRepo.importImageHighRes(uri)
+            if (imported != null) {
+                val doc = _editorState.value.document
+                pushHistoryAndUpdate(doc.copy(backgroundImagePath = imported.path))
+                _editorState.update { it.copy(statusMessage = "Canvas background image updated") }
+            }
+            _editorState.update { it.copy(isProcessingImage = false) }
+        }
+    }
+
+    // Multi-Page Controls (Add Page, Duplicate Page, Delete Page, Switch Page)
+    fun addPage() {
+        val doc = _editorState.value.document
+        val currentPages = doc.normalizedPages()
+        val newPage = CanvasPage(
+            name = "Page ${currentPages.size + 1}",
+            artboardWidth = doc.artboardWidth,
+            artboardHeight = doc.artboardHeight,
+            targetExportWidth = doc.targetExportWidth,
+            targetExportHeight = doc.targetExportHeight,
+            backgroundColor = 0xFFFFFFFFL,
+            layers = emptyList()
+        )
+        val updatedPages = currentPages + newPage
+        val switched = doc.copy(pages = updatedPages).switchToPage(updatedPages.lastIndex)
+        pushHistoryAndUpdate(switched, newSelection = null)
+        _editorState.update { it.copy(statusMessage = "Added ${newPage.name}") }
+    }
+
+    fun duplicateCurrentPage() {
+        val doc = _editorState.value.document
+        val currentPages = doc.normalizedPages()
+        val activeIdx = doc.activePageIndex.coerceIn(0, currentPages.lastIndex)
+        val cur = currentPages[activeIdx]
+        val dupPage = cur.copy(
+            id = UUID.randomUUID().toString(),
+            name = "${cur.name} Copy",
+            layers = cur.layers.map { it.duplicateWithNewId() }
+        )
+        val updatedPages = currentPages.toMutableList().apply { add(activeIdx + 1, dupPage) }
+        val switched = doc.copy(pages = updatedPages).switchToPage(activeIdx + 1)
+        pushHistoryAndUpdate(switched, newSelection = null)
+        _editorState.update { it.copy(statusMessage = "Duplicated page") }
+    }
+
+    fun deleteCurrentPage() {
+        val doc = _editorState.value.document
+        val currentPages = doc.normalizedPages()
+        if (currentPages.size <= 1) {
+            _editorState.update { it.copy(statusMessage = "At least 1 page is required") }
+            return
+        }
+        val activeIdx = doc.activePageIndex.coerceIn(0, currentPages.lastIndex)
+        val updatedPages = currentPages.toMutableList().apply { removeAt(activeIdx) }
+        val nextIdx = activeIdx.coerceAtMost(updatedPages.lastIndex)
+        val switched = doc.copy(pages = updatedPages).switchToPage(nextIdx)
+        pushHistoryAndUpdate(switched, newSelection = null)
+        _editorState.update { it.copy(statusMessage = "Page deleted") }
+    }
+
+    fun switchPage(index: Int) {
+        val doc = _editorState.value.document
+        val switched = doc.switchToPage(index)
+        _editorState.update {
+            it.copy(
+                document = switched,
+                selectedLayerId = null
+            )
+        }
+    }
+
+    fun setActiveColor(
+        color: Long,
+        gradientEnd: Long? = null,
+        gradientMid: Long? = null,
+        gradientType: GradientType = _editorState.value.activeGradientType,
+        gradientAngle: Float = _editorState.value.activeGradientAngle
+    ) {
+        _editorState.update {
+            it.copy(
+                activeColor = color,
+                activeGradientMid = gradientMid,
+                activeGradientEnd = gradientEnd,
+                activeGradientType = gradientType,
+                activeGradientAngle = gradientAngle
+            )
+        }
         viewModelScope.launch { prefsRepo.addRecentColor(color) }
         val sel = selectedLayer() ?: return
         if (sel.locked) return
         val updated: LayerElement = when (sel) {
-            is ShapeLayer -> sel.copy(fillColor = color, gradientEndColor = gradientEnd)
+            is ShapeLayer -> sel.copy(
+                fillColor = color,
+                gradientMidColor = gradientMid,
+                gradientEndColor = gradientEnd,
+                gradientType = gradientType,
+                gradientAngle = gradientAngle
+            )
             is PathLayer -> sel.copy(strokeColor = color)
-            is TextLayer -> sel.copy(color = color, gradientEndColor = gradientEnd)
+            is TextLayer -> sel.copy(
+                color = color,
+                gradientMidColor = gradientMid,
+                gradientEndColor = gradientEnd,
+                gradientType = gradientType,
+                gradientAngle = gradientAngle
+            )
             is StickerLayer -> sel.copy(primaryColor = color)
             is ImageLayer -> sel
         }
         replaceLayerWithHistory(updated)
     }
 
-    fun setShapeStrokeColor(color: Long) {
+    fun setShapeStrokeOptions(color: Long, width: Float, style: StrokeStyle) {
         _editorState.update {
             it.copy(
                 activeStrokeColor = color,
-                activeStrokeWidth = if (it.activeStrokeWidth <= 0f) 6f else it.activeStrokeWidth
+                activeStrokeWidth = width,
+                activeStrokeStyle = style
             )
         }
         viewModelScope.launch { prefsRepo.addRecentColor(color) }
-        val sel = selectedLayer() as? ShapeLayer ?: return
+        val sel = selectedLayer() ?: return
         if (sel.locked) return
-        replaceLayerWithHistory(
-            sel.copy(
-                strokeColor = color,
-                strokeWidth = if (sel.strokeWidth <= 0f) 6f else sel.strokeWidth
-            )
-        )
+        when (sel) {
+            is ShapeLayer -> replaceLayerWithHistory(sel.copy(strokeColor = color, strokeWidth = width, strokeStyle = style))
+            is PathLayer -> replaceLayerWithHistory(sel.copy(strokeColor = color, strokeWidth = width.coerceAtLeast(2f), strokeStyle = style))
+            is TextLayer -> replaceLayerWithHistory(sel.copy(strokeColor = color, strokeWidth = width))
+            else -> {}
+        }
+    }
+
+    fun setShapeStrokeColor(color: Long) {
+        val curW = _editorState.value.activeStrokeWidth.let { if (it <= 0f) 6f else it }
+        setShapeStrokeOptions(color, curW, _editorState.value.activeStrokeStyle)
     }
 
     fun setBrushSettings(size: Float, opacity: Float, style: BrushStyle) {
@@ -432,15 +567,23 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             height = max(24f, h),
             shapeType = shapeType,
             fillColor = state.activeColor,
+            gradientMidColor = state.activeGradientMid,
             gradientEndColor = state.activeGradientEnd,
+            gradientType = state.activeGradientType,
+            gradientAngle = state.activeGradientAngle,
             strokeColor = state.activeStrokeColor,
-            strokeWidth = state.activeStrokeWidth,
-            cornerRadius = if (shapeType == ShapeType.RECTANGLE) state.activeCornerRadius else 0f
+            strokeWidth = if (shapeType == ShapeType.ARC) max(10f, state.activeStrokeWidth) else state.activeStrokeWidth,
+            strokeStyle = state.activeStrokeStyle,
+            cornerRadius = when (shapeType) {
+                ShapeType.ROUNDED_RECT -> max(36f, state.activeCornerRadius)
+                ShapeType.RECTANGLE -> state.activeCornerRadius
+                else -> 0f
+            }
         )
         pushHistoryAndUpdate(doc.copy(layers = doc.layers + layer), newSelection = layer.id)
     }
 
-    fun addPathLayer(rawPoints: List<PathPoint>, isPenTool: Boolean) {
+    fun addPathLayer(rawPoints: List<PathPoint>, isPenTool: Boolean, closed: Boolean = false) {
         if (rawPoints.size < 2) return
         val state = _editorState.value
         val minX = rawPoints.minOf { it.x }
@@ -451,7 +594,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         val h = max(24f, maxY - minY)
         val normalized = rawPoints.map { PathPoint(it.x - minX, it.y - minY) }
         val layer = PathLayer(
-            name = if (isPenTool) "Pen Vector" else "Brush Stroke",
+            name = if (isPenTool) "Vector Anchor Path" else "Brush Stroke",
             x = minX,
             y = minY,
             width = w,
@@ -460,11 +603,73 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             points = normalized,
             strokeColor = state.activeColor,
             strokeWidth = if (isPenTool) state.penStrokeWidth else state.brushSize,
+            strokeStyle = state.activeStrokeStyle,
             isPenSmooth = true,
+            isClosed = closed,
+            fillColor = if (closed) state.activeColor else null,
             brushStyle = if (isPenTool) BrushStyle.ROUND else state.brushStyle
         )
         val doc = state.document
         pushHistoryAndUpdate(doc.copy(layers = doc.layers + layer), newSelection = layer.id)
+    }
+
+    fun convertSelectedShapeToEditablePath(): PathLayer? {
+        val sel = selectedLayer() as? ShapeLayer ?: return null
+        val pts = when (sel.shapeType) {
+            ShapeType.TRIANGLE -> listOf(
+                PathPoint(sel.width / 2f, 0f),
+                PathPoint(sel.width, sel.height),
+                PathPoint(0f, sel.height)
+            )
+            ShapeType.LINE -> listOf(
+                PathPoint(0f, sel.height / 2f),
+                PathPoint(sel.width / 2f, sel.height / 2f),
+                PathPoint(sel.width, sel.height / 2f)
+            )
+            else -> listOf(
+                PathPoint(0f, 0f),
+                PathPoint(sel.width, 0f),
+                PathPoint(sel.width, sel.height),
+                PathPoint(0f, sel.height)
+            )
+        }
+        val pathLayer = PathLayer(
+            id = sel.id,
+            name = "${sel.name} (Points)",
+            x = sel.x,
+            y = sel.y,
+            width = sel.width,
+            height = sel.height,
+            rotation = sel.rotation,
+            opacity = sel.opacity,
+            points = pts,
+            strokeColor = if ((sel.strokeColor ushr 24) > 0L) sel.strokeColor else sel.fillColor,
+            strokeWidth = max(6f, sel.strokeWidth),
+            isPenSmooth = sel.shapeType == ShapeType.CIRCLE,
+            fillColor = if (sel.shapeType != ShapeType.LINE) sel.fillColor else null,
+            isClosed = sel.shapeType != ShapeType.LINE,
+            flipH = sel.flipH,
+            flipV = sel.flipV,
+            groupId = sel.groupId,
+            effects = sel.effects
+        )
+        replaceLayerWithHistory(pathLayer)
+        return pathLayer
+    }
+
+    fun updatePathAnchorPointLive(layerId: String, pointIndex: Int, artboardX: Float, artboardY: Float) {
+        val doc = _editorState.value.document
+        val layer = doc.layers.find { it.id == layerId } as? PathLayer ?: return
+        if (layer.locked || pointIndex !in layer.points.indices) return
+        val newLocalX = artboardX - layer.x
+        val newLocalY = artboardY - layer.y
+        val updatedPts = layer.points.toMutableList().apply {
+            this[pointIndex] = PathPoint(newLocalX, newLocalY)
+        }
+        val updatedLayer = layer.copy(points = updatedPts)
+        _editorState.update {
+            it.copy(document = doc.copy(layers = doc.layers.map { l -> if (l.id == layerId) updatedLayer else l }))
+        }
     }
 
     fun addTextLayer(
@@ -474,6 +679,11 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         color: Long = _editorState.value.activeColor,
         bold: Boolean = false,
         italic: Boolean = false,
+        underline: Boolean = false,
+        lineSpacing: Float = 1.15f,
+        letterSpacing: Float = 0f,
+        textBackgroundColor: Long? = null,
+        curveAmount: Float = 0f,
         align: TextAlignMode = TextAlignMode.CENTER,
         shadowEnabled: Boolean = false,
         strokeWidth: Float = 0f,
@@ -494,6 +704,11 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             color = color,
             bold = bold,
             italic = italic,
+            underline = underline,
+            lineSpacing = lineSpacing,
+            letterSpacing = letterSpacing,
+            textBackgroundColor = textBackgroundColor,
+            curveAmount = curveAmount,
             align = align,
             shadowEnabled = shadowEnabled,
             strokeWidth = strokeWidth,
@@ -883,16 +1098,24 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     ) {
         val sel = selectedLayer() ?: return
         if (sel.locked) return
-        val updated = sel.withBase(
-            x = sel.x + dx,
-            y = sel.y + dy,
-            width = (newWidth ?: sel.width).coerceAtLeast(24f),
-            height = (newHeight ?: sel.height).coerceAtLeast(24f),
-            rotation = newRotation ?: sel.rotation
-        )
+        val gid = sel.groupId
+        val isMovingOnly = newWidth == null && newHeight == null && newRotation == null && gid != null
         val doc = _editorState.value.document
+        val nextLayers = doc.layers.map { l ->
+            when {
+                l.id == sel.id -> l.withBase(
+                    x = l.x + dx,
+                    y = l.y + dy,
+                    width = (newWidth ?: l.width).coerceAtLeast(24f),
+                    height = (newHeight ?: l.height).coerceAtLeast(24f),
+                    rotation = newRotation ?: l.rotation
+                )
+                isMovingOnly && l.groupId == gid && !l.locked -> l.withBase(x = l.x + dx, y = l.y + dy)
+                else -> l
+            }
+        }
         _editorState.update {
-            it.copy(document = doc.copy(layers = doc.layers.map { l -> if (l.id == sel.id) updated else l }))
+            it.copy(document = doc.copy(layers = nextLayers))
         }
     }
 
@@ -905,6 +1128,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             val snapped = sel.withBase(x = snap(sel.x), y = snap(sel.y))
             current = current.copy(layers = current.layers.map { if (it.id == sel.id) snapped else it })
         }
+        current = current.copy(pages = current.normalizedPages())
         if (before != current) {
             undoStack.addLast(before)
             while (undoStack.size > 100) undoStack.removeFirst()
@@ -1056,6 +1280,59 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         val sel = selectedLayer() ?: return
         if (sel.locked) return
         replaceLayerWithHistory(sel.withBase(x = sel.x + dx, y = sel.y + dy))
+    }
+
+    fun flipSelectedHorizontal() {
+        val sel = selectedLayer() ?: return
+        if (sel.locked) return
+        replaceLayerWithHistory(sel.withExtras(flipH = !sel.flipH))
+    }
+
+    fun flipSelectedVertical() {
+        val sel = selectedLayer() ?: return
+        if (sel.locked) return
+        replaceLayerWithHistory(sel.withExtras(flipV = !sel.flipV))
+    }
+
+    fun updateSelectedEffects(effects: LayerEffects) {
+        val sel = selectedLayer() ?: return
+        if (sel.locked) return
+        replaceLayerWithHistory(sel.withExtras(effects = effects))
+    }
+
+    fun toggleGroupSelected() {
+        val sel = selectedLayer() ?: return
+        val doc = _editorState.value.document
+        if (sel.groupId != null) {
+            val targetGroup = sel.groupId
+            val next = doc.layers.map { l ->
+                if (l.groupId == targetGroup) l.withExtras(groupId = null) else l
+            }
+            pushHistoryAndUpdate(doc.copy(layers = next))
+            _editorState.update { it.copy(statusMessage = "Ungrouped layers") }
+        } else {
+            val idx = doc.layers.indexOfFirst { it.id == sel.id }
+            val partner = doc.layers.getOrNull(idx - 1) ?: doc.layers.getOrNull(idx + 1)
+            if (partner == null) {
+                _editorState.update { it.copy(statusMessage = "Add at least 2 layers to Group") }
+                return
+            }
+            val newGid = "grp_${UUID.randomUUID().toString().take(6)}"
+            val next = doc.layers.map { l ->
+                if (l.id == sel.id || l.id == partner.id) l.withExtras(groupId = newGid) else l
+            }
+            pushHistoryAndUpdate(doc.copy(layers = next))
+            _editorState.update { it.copy(statusMessage = "Grouped ${sel.name} + ${partner.name}") }
+        }
+    }
+
+    fun reorderLayer(fromActualIndex: Int, toActualIndex: Int) {
+        val doc = _editorState.value.document
+        if (fromActualIndex !in doc.layers.indices || toActualIndex !in doc.layers.indices || fromActualIndex == toActualIndex) return
+        val mutable = doc.layers.toMutableList()
+        val item = mutable.removeAt(fromActualIndex)
+        mutable.add(toActualIndex, item)
+        pushHistoryAndUpdate(doc.copy(layers = mutable))
     }
 
     fun sampleColorAtArtboard(artboardX: Float, artboardY: Float) {

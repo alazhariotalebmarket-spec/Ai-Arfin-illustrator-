@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.TextAlignMode
@@ -45,6 +46,11 @@ fun TextEditorSheet(
     var textColor by remember(layerKey) { mutableLongStateOf(existingLayer?.color ?: defaultColor) }
     var bold by remember(layerKey) { mutableStateOf(existingLayer?.bold ?: false) }
     var italic by remember(layerKey) { mutableStateOf(existingLayer?.italic ?: false) }
+    var underline by remember(layerKey) { mutableStateOf(existingLayer?.underline ?: false) }
+    var lineSpacing by remember(layerKey) { mutableFloatStateOf(existingLayer?.lineSpacing ?: 1.15f) }
+    var letterSpacing by remember(layerKey) { mutableFloatStateOf(existingLayer?.letterSpacing ?: 0f) }
+    var textBgColor by remember(layerKey) { mutableStateOf(existingLayer?.textBackgroundColor) }
+    var curveAmount by remember(layerKey) { mutableFloatStateOf(existingLayer?.curveAmount ?: 0f) }
     var align by remember(layerKey) { mutableStateOf(existingLayer?.align ?: TextAlignMode.CENTER) }
     var shadowEnabled by remember(layerKey) { mutableStateOf(existingLayer?.shadowEnabled ?: false) }
     var strokeWidth by remember(layerKey) { mutableFloatStateOf(existingLayer?.strokeWidth ?: 0f) }
@@ -52,6 +58,8 @@ fun TextEditorSheet(
     var fontFilter by remember { mutableStateOf("All") }
 
     val selectedFontOption = remember(fontId) { FontCatalog.findById(fontId) }
+    val banglaTotal = remember { FontCatalog.banglaCount() }
+    val englishTotal = remember { FontCatalog.englishCount() }
     val fontCategories = listOf("All", "Bangla", "English", "Calligraphy", "Display", "Mono")
     val filteredFonts = remember(fontFilter) {
         if (fontFilter == "All") FontCatalog.fonts else FontCatalog.fonts.filter { it.category == fontFilter }
@@ -102,7 +110,7 @@ fun TextEditorSheet(
             // Live Font Preview Box
             Surface(
                 shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant,
+                color = if (textBgColor != null) Color(textBgColor!!.toInt()) else MaterialTheme.colorScheme.surfaceVariant,
                 modifier = Modifier
                     .fillMaxWidth()
                     .border(1.dp, OrangePrimary.copy(alpha = 0.45f), RoundedCornerShape(12.dp))
@@ -122,8 +130,10 @@ fun TextEditorSheet(
                         fontFamily = FontCatalog.composeFontFamily(selectedFontOption),
                         fontWeight = if (bold || selectedFontOption.defaultBold) FontWeight.Bold else FontWeight.Normal,
                         fontStyle = if (italic || selectedFontOption.defaultItalic) FontStyle.Italic else FontStyle.Normal,
+                        textDecoration = if (underline) TextDecoration.Underline else TextDecoration.None,
+                        letterSpacing = (letterSpacing * 10f).sp,
                         fontSize = 20.sp,
-                        color = if (textColor == 0xFF1E1E1EL) MaterialTheme.colorScheme.onSurface else Color(textColor.toInt()),
+                        color = if (textColor == 0xFF1E1E1EL && textBgColor == null) MaterialTheme.colorScheme.onSurface else Color(textColor.toInt()),
                         maxLines = 2
                     )
                 }
@@ -182,10 +192,12 @@ fun TextEditorSheet(
                 }
             }
 
-            // Style & Alignment Toggles
+            // Style & Alignment Toggles (Bold, Italic, Underline, Shadow, Align L/C/R)
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 FilterChip(
@@ -199,11 +211,15 @@ fun TextEditorSheet(
                     label = { Text("I", fontStyle = FontStyle.Italic) }
                 )
                 FilterChip(
+                    selected = underline,
+                    onClick = { underline = !underline },
+                    label = { Text("U", textDecoration = TextDecoration.Underline) }
+                )
+                FilterChip(
                     selected = shadowEnabled,
                     onClick = { shadowEnabled = !shadowEnabled },
                     label = { Text("Shadow") }
                 )
-                Spacer(modifier = Modifier.weight(1f))
                 IconButton(onClick = { align = TextAlignMode.LEFT }) {
                     Icon(
                         Icons.Default.FormatAlignLeft,
@@ -227,9 +243,9 @@ fun TextEditorSheet(
                 }
             }
 
-            // Font Size Slider
+            // Font Size, Line Spacing, Letter Spacing, Curve Text, Outline Sliders
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Size: ${fontSize.toInt()}px", fontSize = 12.sp, modifier = Modifier.width(86.dp))
+                Text("Size: ${fontSize.toInt()}px", fontSize = 11.sp, modifier = Modifier.width(96.dp))
                 Slider(
                     value = fontSize,
                     onValueChange = { fontSize = it },
@@ -238,10 +254,38 @@ fun TextEditorSheet(
                     modifier = Modifier.weight(1f)
                 )
             }
-
-            // Outline Stroke Slider
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Outline: ${strokeWidth.toInt()}", fontSize = 12.sp, modifier = Modifier.width(86.dp))
+                Text("Line Gap: ${String.format("%.1f", lineSpacing)}", fontSize = 11.sp, modifier = Modifier.width(96.dp))
+                Slider(
+                    value = lineSpacing,
+                    onValueChange = { lineSpacing = it },
+                    valueRange = 0.8f..2.2f,
+                    colors = SliderDefaults.colors(thumbColor = OrangePrimary, activeTrackColor = OrangePrimary),
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Letter Gap: ${String.format("%.2f", letterSpacing)}", fontSize = 11.sp, modifier = Modifier.width(96.dp))
+                Slider(
+                    value = letterSpacing,
+                    onValueChange = { letterSpacing = it },
+                    valueRange = -0.05f..0.4f,
+                    colors = SliderDefaults.colors(thumbColor = OrangePrimary, activeTrackColor = OrangePrimary),
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Curve: ${(curveAmount * 100).toInt()}%", fontSize = 11.sp, modifier = Modifier.width(96.dp))
+                Slider(
+                    value = curveAmount,
+                    onValueChange = { curveAmount = it },
+                    valueRange = -1f..1f,
+                    colors = SliderDefaults.colors(thumbColor = OrangePrimary, activeTrackColor = OrangePrimary),
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Stroke: ${strokeWidth.toInt()}px", fontSize = 11.sp, modifier = Modifier.width(96.dp))
                 Slider(
                     value = strokeWidth,
                     onValueChange = { strokeWidth = it },
@@ -251,7 +295,7 @@ fun TextEditorSheet(
                 )
             }
 
-            // Quick Text Colors
+            // Text Color & Text Background
             Text("Text Color", style = MaterialTheme.typography.labelMedium)
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 colorSwatches.forEach { c ->
@@ -271,8 +315,39 @@ fun TextEditorSheet(
                 }
             }
 
-            // 50+ Font Picker
-            Text("Font Family (${FontCatalog.fonts.size} Bangla & English Fonts)", style = MaterialTheme.typography.labelMedium, color = OrangePrimary)
+            Text("Text Background Highlight", style = MaterialTheme.typography.labelMedium)
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                FilterChip(
+                    selected = textBgColor == null,
+                    onClick = { textBgColor = null },
+                    label = { Text("None", fontSize = 11.sp) }
+                )
+                colorSwatches.take(6).forEach { c ->
+                    val active = textBgColor == c
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .background(Color(c.toInt()))
+                            .border(
+                                width = if (active) 3.dp else 1.dp,
+                                color = if (active) OrangePrimary else MaterialTheme.colorScheme.outline,
+                                shape = CircleShape
+                            )
+                            .clickable { textBgColor = c }
+                    )
+                }
+            }
+
+            // 54 Bangla + 24 English Font Picker
+            Text(
+                "Font Family ($banglaTotal Bangla + $englishTotal English • Total ${FontCatalog.fonts.size})",
+                style = MaterialTheme.typography.labelMedium,
+                color = OrangePrimary
+            )
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -280,10 +355,15 @@ fun TextEditorSheet(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 fontCategories.forEach { cat ->
+                    val label = when (cat) {
+                        "Bangla" -> "Bangla ($banglaTotal)"
+                        "English" -> "English ($englishTotal)"
+                        else -> cat
+                    }
                     FilterChip(
                         selected = fontFilter == cat,
                         onClick = { fontFilter = cat },
-                        label = { Text(cat, fontSize = 12.sp) }
+                        label = { Text(label, fontSize = 12.sp) }
                     )
                 }
             }
@@ -338,6 +418,11 @@ fun TextEditorSheet(
                                 color = textColor,
                                 bold = bold,
                                 italic = italic,
+                                underline = underline,
+                                lineSpacing = lineSpacing,
+                                letterSpacing = letterSpacing,
+                                textBackgroundColor = textBgColor,
+                                curveAmount = curveAmount,
                                 align = align,
                                 shadowEnabled = shadowEnabled,
                                 strokeWidth = strokeWidth,
@@ -354,6 +439,11 @@ fun TextEditorSheet(
                                 color = textColor,
                                 bold = bold,
                                 italic = italic,
+                                underline = underline,
+                                lineSpacing = lineSpacing,
+                                letterSpacing = letterSpacing,
+                                textBackgroundColor = textBgColor,
+                                curveAmount = curveAmount,
                                 align = align,
                                 shadowEnabled = shadowEnabled,
                                 strokeWidth = strokeWidth,

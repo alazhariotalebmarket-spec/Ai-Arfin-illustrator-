@@ -52,6 +52,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -68,9 +69,13 @@ import com.example.viewmodel.EditorUiState
 import com.example.viewmodel.StudioViewModel
 import kotlinx.coroutines.launch
 import java.io.File
+import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.atan2
+import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sin
 
 @Composable
 fun EditorScreen(
@@ -89,9 +94,11 @@ fun EditorScreen(
         onBack()
     }
 
-    // Modal sheets
+    // Modal sheets & menus
     var showRenameDialog by remember { mutableStateOf(false) }
     var showCanvasSizeSheet by remember { mutableStateOf(false) }
+    var showCanvasPagesSheet by remember { mutableStateOf(false) }
+    var showEffectsSheet by remember { mutableStateOf(false) }
     var showExportSheet by remember { mutableStateOf(false) }
     var showStickerSheet by remember { mutableStateOf(false) }
     var showColorSheet by remember { mutableStateOf(false) }
@@ -100,32 +107,28 @@ fun EditorScreen(
     var showImageSheet by remember { mutableStateOf(false) }
     var showPhotoCutoutDialog by remember { mutableStateOf(false) }
     var pickedBgColor by remember(state.selectedLayerId) { mutableStateOf<Int?>(null) }
+    var showLongPressMenu by remember { mutableStateOf(false) }
+    var quickExportMenuOpen by remember { mutableStateOf(false) }
 
     // Camera, File Manager & Photo Picker launchers
     var pendingCameraUri by remember { mutableStateOf<Uri?>(null) }
 
     val fileManagerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        if (uri != null) {
-            viewModel.importImageFromUri(uri)
-        }
-    }
+    ) { uri -> if (uri != null) viewModel.importImageFromUri(uri) }
+
+    val bgImagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri -> if (uri != null) viewModel.setArtboardBackgroundImage(uri) }
 
     val galleryLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
-    ) { uri ->
-        if (uri != null) {
-            viewModel.importImageFromUri(uri)
-        }
-    }
+    ) { uri -> if (uri != null) viewModel.importImageFromUri(uri) }
 
     val cameraLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicture()
     ) { success ->
-        if (success && pendingCameraUri != null) {
-            viewModel.importImageFromUri(pendingCameraUri!!)
-        }
+        if (success && pendingCameraUri != null) viewModel.importImageFromUri(pendingCameraUri!!)
     }
 
     fun launchCameraCapture() {
@@ -158,7 +161,6 @@ fun EditorScreen(
     var zoomScale by remember { mutableFloatStateOf(1f) }
     var panOffset by remember { mutableStateOf(Offset.Zero) }
 
-    // Compute base fit scale for artboard inside viewport
     val baseFitScale = remember(viewportSize, state.document.artboardWidth, state.document.artboardHeight) {
         if (viewportSize.width == 0 || viewportSize.height == 0) 0.3f
         else {
@@ -174,13 +176,23 @@ fun EditorScreen(
     val artboardLeft = (viewportSize.width - state.document.artboardWidth * effectiveScale) / 2f + panOffset.x
     val artboardTop = (viewportSize.height - state.document.artboardHeight * effectiveScale) / 2f + panOffset.y
 
-    // Active live drawing states
+    // Active live drawing / point editing states
     var activeStrokePoints by remember { mutableStateOf<List<PathPoint>>(emptyList()) }
+    var penAnchorPoints by remember { mutableStateOf<List<PathPoint>>(emptyList()) }
     var activeShapeStart by remember { mutableStateOf<PathPoint?>(null) }
     var activeShapeEnd by remember { mutableStateOf<PathPoint?>(null) }
-    var draggingMode by remember { mutableStateOf("NONE") } // NONE, MOVE, RESIZE
+    var draggingMode by remember { mutableStateOf("NONE") } // NONE, MOVE, RESIZE, ROTATE, ANCHOR
+    var draggingAnchorIndex by remember { mutableIntStateOf(-1) }
 
-    // Rename Dialog
+    LaunchedEffect(state.activeTool) {
+        if (state.activeTool != ToolMode.PEN && state.activeTool != ToolMode.CURVATURE && penAnchorPoints.size >= 2) {
+            viewModel.addPathLayer(penAnchorPoints, isPenTool = true, closed = false)
+        }
+        if (state.activeTool != ToolMode.PEN && state.activeTool != ToolMode.CURVATURE) {
+            penAnchorPoints = emptyList()
+        }
+    }
+
     if (showRenameDialog) {
         var draft by remember { mutableStateOf(state.document.name) }
         AlertDialog(
@@ -226,6 +238,40 @@ fun EditorScreen(
         )
     }
 
+    if (showCanvasPagesSheet) {
+        CanvasPagesSheet(
+            document = state.document,
+            onDismiss = { showCanvasPagesSheet = false },
+            onOpenColorPicker = { showColorSheet = true },
+            onPickBackgroundImage = {
+                showCanvasPagesSheet = false
+                bgImagePickerLauncher.launch(arrayOf("image/*"))
+            },
+            onClearBackgroundImage = { viewModel.setArtboardBackgroundImage(null) },
+            onOpenCanvasSize = { showCanvasSizeSheet = true },
+            onSwitchPage = { idx ->
+                viewModel.switchPage(idx)
+                zoomScale = 1f
+                panOffset = Offset.Zero
+            },
+            onAddPage = { viewModel.addPage() },
+            onDuplicatePage = { viewModel.duplicateCurrentPage() },
+            onDeletePage = { viewModel.deleteCurrentPage() }
+        )
+    }
+
+    if (showEffectsSheet) {
+        EffectsSheet(
+            selectedLayer = selectedLayer,
+            onDismiss = { showEffectsSheet = false },
+            onApplyEffects = { fx -> viewModel.updateSelectedEffects(fx) },
+            onFlipHorizontal = { viewModel.flipSelectedHorizontal() },
+            onFlipVertical = { viewModel.flipSelectedVertical() },
+            onToggleGroup = { viewModel.toggleGroupSelected() },
+            onUpdateStrokeOptions = { c, w, s -> viewModel.setShapeStrokeOptions(c, w, s) }
+        )
+    }
+
     if (showExportSheet) {
         ExportSheet(
             document = state.document,
@@ -249,14 +295,23 @@ fun EditorScreen(
     if (showColorSheet) {
         ColorPickerSheet(
             initialColor = state.activeColor,
+            initialGradientMid = state.activeGradientMid,
             initialGradientEnd = state.activeGradientEnd,
+            initialGradientType = state.activeGradientType,
+            initialGradientAngle = state.activeGradientAngle,
+            initialStrokeWidth = state.activeStrokeWidth,
+            initialStrokeStyle = state.activeStrokeStyle,
             recentColors = recentColors,
             hasSelectedLayer = selectedLayer != null,
-            showStrokeOption = selectedLayer is ShapeLayer || state.activeTool == ToolMode.SHAPES,
+            showStrokeOption = selectedLayer is ShapeLayer || selectedLayer is PathLayer || state.activeTool == ToolMode.SHAPES,
             onDismiss = { showColorSheet = false },
-            onApplyToSelectionOrTool = { c, g -> viewModel.setActiveColor(c, g) },
-            onApplyToStroke = { c -> viewModel.setShapeStrokeColor(c) },
-            onApplyToArtboardBg = { c, g -> viewModel.setArtboardBackground(c, g) },
+            onApplyToSelectionOrTool = { c, end, mid, gType, angle ->
+                viewModel.setActiveColor(c, end, mid, gType, angle)
+            },
+            onApplyToStroke = { c, w, st -> viewModel.setShapeStrokeOptions(c, w, st) },
+            onApplyToArtboardBg = { c, end, mid, gType ->
+                viewModel.setArtboardBackground(c, end, mid, gType)
+            },
             onActivateEyedropper = {
                 showColorSheet = false
                 viewModel.setTool(ToolMode.EYEDROPPER)
@@ -280,6 +335,11 @@ fun EditorScreen(
                     color = layer.color,
                     bold = layer.bold,
                     italic = layer.italic,
+                    underline = layer.underline,
+                    lineSpacing = layer.lineSpacing,
+                    letterSpacing = layer.letterSpacing,
+                    textBackgroundColor = layer.textBackgroundColor,
+                    curveAmount = layer.curveAmount,
                     align = layer.align,
                     shadowEnabled = layer.shadowEnabled,
                     strokeWidth = layer.strokeWidth,
@@ -301,12 +361,8 @@ fun EditorScreen(
             pickedBgColor = pickedBgColor,
             onClearPickedBgColor = { pickedBgColor = null },
             onDismiss = { showImageSheet = false },
-            onPickFromFileManager = {
-                fileManagerLauncher.launch(arrayOf("image/*"))
-            },
-            onPickFromGallery = {
-                galleryLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-            },
+            onPickFromFileManager = { fileManagerLauncher.launch(arrayOf("image/*")) },
+            onPickFromGallery = { galleryLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
             onCaptureFromCamera = {
                 val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
                     PackageManager.PERMISSION_GRANTED
@@ -361,6 +417,9 @@ fun EditorScreen(
         )
     }
 
+    val pages = state.document.normalizedPages()
+    val activePageNum = state.document.activePageIndex.coerceIn(0, pages.lastIndex) + 1
+
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         contentWindowInsets = WindowInsets.safeDrawing,
@@ -370,12 +429,12 @@ fun EditorScreen(
                     .fillMaxWidth()
                     .background(MaterialTheme.colorScheme.surface)
                     .windowInsetsPadding(WindowInsets.statusBars.union(WindowInsets.displayCutout))
-                    .padding(top = 8.dp)
+                    .padding(top = 6.dp)
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(
@@ -392,7 +451,7 @@ fun EditorScreen(
                         modifier = Modifier
                             .weight(1f)
                             .clickable { showRenameDialog = true }
-                            .padding(horizontal = 4.dp)
+                            .padding(horizontal = 2.dp)
                     ) {
                         Text(
                             text = state.document.name,
@@ -401,63 +460,89 @@ fun EditorScreen(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        Text(
+                            text = (state.document.smartModeLabel ?: "${state.document.artboardWidth}×${state.document.artboardHeight}") +
+                                if (state.isSaving) " • Saving" else "",
+                            fontSize = 10.sp,
+                            color = OrangePrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.clickable { showCanvasSizeSheet = true }
+                        )
+                    }
+
+                    // Undo / Redo right in Top Toolbar
+                    IconButton(
+                        onClick = { viewModel.undo() },
+                        enabled = state.canUndo,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Undo", modifier = Modifier.size(19.dp))
+                    }
+                    IconButton(
+                        onClick = { viewModel.redo() },
+                        enabled = state.canRedo,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = "Redo", modifier = Modifier.size(19.dp))
+                    }
+
+                    IconButton(
+                        onClick = { viewModel.saveCurrentProject(silent = false) },
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(Icons.Default.Save, contentDescription = "Save Offline", modifier = Modifier.size(19.dp))
+                    }
+
+                    Box {
+                        Button(
+                            onClick = { showExportSheet = true },
+                            colors = ButtonDefaults.buttonColors(containerColor = OrangePrimary),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            modifier = Modifier
+                                .height(36.dp)
+                                .testTag("editor_export_btn")
                         ) {
-                            Text(
-                                text = state.document.smartModeLabel ?: "${state.document.artboardWidth}×${state.document.artboardHeight}",
-                                fontSize = 10.sp,
-                                color = OrangePrimary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.clickable { showCanvasSizeSheet = true }
-                            )
-                            Text(
-                                text = if (state.isSaving) "• Saving..." else "• Auto-saved",
-                                fontSize = 10.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Text("Export", fontWeight = FontWeight.Bold, fontSize = 11.sp, maxLines = 1)
                         }
                     }
-
-                    IconButton(onClick = { viewModel.saveCurrentProject(silent = false) }) {
-                        Icon(Icons.Default.Save, contentDescription = "Save Offline", modifier = Modifier.size(20.dp))
-                    }
-
-                    IconButton(onClick = {
-                        scope.launch {
-                            val res = ExportManager.prepareShareUri(
-                                context,
-                                state.document,
-                                ExportFormat.PNG,
-                                defaultResolution,
-                                transparentBackground = state.transparentPreview
-                            )
-                            res.shareUri?.let { uri ->
-                                ExportManager.launchShareIntent(context, uri, ExportFormat.PNG.mimeType)
+                    IconButton(
+                        onClick = { quickExportMenuOpen = true },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "Quick Export PNG/JPG/PDF", modifier = Modifier.size(18.dp))
+                        DropdownMenu(
+                            expanded = quickExportMenuOpen,
+                            onDismissRequest = { quickExportMenuOpen = false }
+                        ) {
+                            listOf(
+                                ExportFormat.PNG to "Quick Export PNG",
+                                ExportFormat.JPG to "Quick Export JPG",
+                                ExportFormat.PDF to "Quick Export PDF"
+                            ).forEach { (fmt, label) ->
+                                DropdownMenuItem(
+                                    text = { Text(label) },
+                                    leadingIcon = { Icon(Icons.Default.Download, contentDescription = null, tint = OrangePrimary) },
+                                    onClick = {
+                                        quickExportMenuOpen = false
+                                        scope.launch {
+                                            val res = ExportManager.exportToGalleryOrDownloads(
+                                                context = context,
+                                                document = state.document,
+                                                format = fmt,
+                                                resolution = defaultResolution,
+                                                transparentBackground = fmt.supportsTransparency && state.transparentPreview
+                                            )
+                                            snackbarHostState.showSnackbar(res.message)
+                                        }
+                                    }
+                                )
                             }
                         }
-                    }) {
-                        Icon(Icons.Default.Share, contentDescription = "Share", modifier = Modifier.size(20.dp))
-                    }
-
-                    Spacer(modifier = Modifier.width(4.dp))
-
-                    Button(
-                        onClick = { showExportSheet = true },
-                        colors = ButtonDefaults.buttonColors(containerColor = OrangePrimary),
-                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
-                        modifier = Modifier
-                            .height(38.dp)
-                            .padding(end = 2.dp)
-                            .testTag("editor_export_btn")
-                    ) {
-                        Text("Export", fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
                     }
                 }
 
-                // Studio Sub-Bar: Canvas Size, Grid, Ruler, Snap, Transparent BG preview
+                // Top Sub-Bar: Zoom In/Out, Grid, Ruler, Snap, Page Manager, Alpha BG
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -466,10 +551,22 @@ fun EditorScreen(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    SmallToggleChip("Size", Icons.Default.AspectRatio, false) { showCanvasSizeSheet = true }
+                    SmallToggleChip("-", Icons.Default.ZoomOut, false) {
+                        zoomScale = (zoomScale / 1.25f).coerceAtLeast(0.35f)
+                    }
+                    SmallToggleChip("${(zoomScale * 100).toInt()}%", Icons.Default.ZoomIn, zoomScale != 1f) {
+                        if (zoomScale > 2.5f) {
+                            zoomScale = 1f; panOffset = Offset.Zero
+                        } else {
+                            zoomScale = (zoomScale * 1.25f).coerceAtMost(10f)
+                        }
+                    }
                     SmallToggleChip("Grid", Icons.Default.GridOn, state.showGrid) { viewModel.toggleGrid() }
                     SmallToggleChip("Ruler", Icons.Default.Straighten, state.showRuler) { viewModel.toggleRuler() }
                     SmallToggleChip("Snap", Icons.Default.GridGoldenratio, state.snapToGrid) { viewModel.toggleSnap() }
+                    SmallToggleChip("Page $activePageNum/${pages.size}", Icons.Default.Layers, false) {
+                        showCanvasPagesSheet = true
+                    }
                     SmallToggleChip("Alpha BG", Icons.Default.Texture, state.transparentPreview) { viewModel.toggleTransparentPreview() }
                 }
             }
@@ -485,9 +582,20 @@ fun EditorScreen(
                     state = state,
                     selectedLayer = selectedLayer,
                     zoomScale = zoomScale,
+                    penPointCount = penAnchorPoints.size,
                     onSelectShape = { viewModel.setShapeType(it) },
                     onAddQuickShape = { viewModel.addShapeLayer(it) },
                     onUpdateShape = { viewModel.replaceLayerWithHistory(it) },
+                    onUpdatePath = { viewModel.replaceLayerWithHistory(it) },
+                    onFinishPenPath = { closed ->
+                        if (penAnchorPoints.size >= 2) {
+                            viewModel.addPathLayer(penAnchorPoints, isPenTool = true, closed = closed)
+                        }
+                        penAnchorPoints = emptyList()
+                        viewModel.setTool(ToolMode.SELECT)
+                    },
+                    onClearPenPath = { penAnchorPoints = emptyList() },
+                    onConvertShapeToPoints = { viewModel.convertSelectedShapeToEditablePath() },
                     onBrushChange = { s, o, st -> viewModel.setBrushSettings(s, o, st) },
                     onPenStrokeChange = { viewModel.setPenStrokeWidth(it) },
                     onEraserSizeChange = { viewModel.setEraserSize(it) },
@@ -504,13 +612,19 @@ fun EditorScreen(
                     onCopySelected = { viewModel.copySelected() },
                     onPasteClipboard = { viewModel.pasteClipboard() },
                     onDeleteSelected = { selectedLayer?.let { viewModel.deleteLayer(it.id) } },
+                    onFlipH = { viewModel.flipSelectedHorizontal() },
+                    onFlipV = { viewModel.flipSelectedVertical() },
+                    onToggleGroup = { viewModel.toggleGroupSelected() },
+                    onBringForward = { selectedLayer?.let { viewModel.bringForward(it.id) } },
+                    onSendBackward = { selectedLayer?.let { viewModel.sendBackward(it.id) } },
+                    onOpenEffectsSheet = { showEffectsSheet = true },
                     onUpdateOpacity = { viewModel.updateSelectedOpacity(it) },
                     onRotateSelected = { viewModel.rotateSelectedBy(it) },
                     onNudgeSelected = { dx, dy -> viewModel.nudgeSelected(dx, dy) },
                     onOpenColorPicker = { showColorSheet = true }
                 )
 
-                // Big Touch-Friendly Bottom Toolbar
+                // Full Illustrator Bottom Bar
                 Surface(
                     color = MaterialTheme.colorScheme.surface,
                     tonalElevation = 8.dp,
@@ -524,39 +638,56 @@ fun EditorScreen(
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        ToolButton("Select", Icons.Default.NearMe, state.activeTool == ToolMode.SELECT) {
-                            viewModel.setTool(ToolMode.SELECT)
-                        }
-                        ToolButton("Pen", Icons.Default.Edit, state.activeTool == ToolMode.PEN) {
-                            viewModel.setTool(ToolMode.PEN)
-                        }
-                        ToolButton("Brush", Icons.Default.Brush, state.activeTool == ToolMode.BRUSH) {
-                            viewModel.setTool(ToolMode.BRUSH)
-                        }
-                        ToolButton("Shapes", Icons.Default.Category, state.activeTool == ToolMode.SHAPES) {
-                            viewModel.setTool(ToolMode.SHAPES)
-                        }
                         ToolButton("Text", Icons.Default.Title, selectedLayer is TextLayer) {
                             editingTextLayer = selectedLayer as? TextLayer
                             showTextSheet = true
                         }
-                        ToolButton("Image", Icons.Default.Image, false) {
-                            showImageSheet = true
-                        }
-                        ToolButton("Stickers", Icons.Default.AutoAwesome, false) {
-                            showStickerSheet = true
+                        ToolButton("Fonts", Icons.Default.FontDownload, false) {
+                            editingTextLayer = selectedLayer as? TextLayer
+                            showTextSheet = true
                         }
                         ToolButton("Color", Icons.Default.Palette, false) {
                             showColorSheet = true
                         }
-                        ToolButton("Eraser", Icons.Default.AutoFixNormal, state.activeTool == ToolMode.ERASER) {
-                            viewModel.setTool(ToolMode.ERASER)
+                        ToolButton("Gradient", Icons.Default.Gradient, state.activeGradientEnd != null) {
+                            showColorSheet = true
+                        }
+                        ToolButton("Stroke", Icons.Default.BorderColor, false) {
+                            if (selectedLayer != null) showEffectsSheet = true else showColorSheet = true
+                        }
+                        ToolButton("Shadow", Icons.Default.AutoAwesome, false) {
+                            showEffectsSheet = true
+                        }
+                        ToolButton("Opacity", Icons.Default.Opacity, false) {
+                            if (selectedLayer != null) viewModel.setTool(ToolMode.SELECT)
+                            else showEffectsSheet = true
                         }
                         ToolButton("Align", Icons.Default.FormatAlignCenter, state.activeTool == ToolMode.ALIGN) {
                             viewModel.setTool(ToolMode.ALIGN)
                         }
                         ToolButton("Layers", Icons.Default.Layers, state.layersPanelOpen) {
                             viewModel.setLayersPanelOpen(!state.layersPanelOpen)
+                        }
+                        ToolButton("Background", Icons.Default.Wallpaper, false) {
+                            showCanvasPagesSheet = true
+                        }
+                        ToolButton("Elements", Icons.Default.Interests, false) {
+                            showStickerSheet = true
+                        }
+                        ToolButton("Stickers", Icons.Default.EmojiEmotions, false) {
+                            showStickerSheet = true
+                        }
+                        ToolButton("Shapes", Icons.Default.Category, state.activeTool == ToolMode.SHAPES) {
+                            viewModel.setTool(ToolMode.SHAPES)
+                        }
+                        ToolButton("Image", Icons.Default.Image, false) {
+                            showImageSheet = true
+                        }
+                        ToolButton("Brush", Icons.Default.Brush, state.activeTool == ToolMode.BRUSH) {
+                            viewModel.setTool(ToolMode.BRUSH)
+                        }
+                        ToolButton("Eraser", Icons.Default.AutoFixNormal, state.activeTool == ToolMode.ERASER) {
+                            viewModel.setTool(ToolMode.ERASER)
                         }
                         ToolButton("Undo", Icons.AutoMirrored.Filled.Undo, false, enabled = state.canUndo) {
                             viewModel.undo()
@@ -566,6 +697,12 @@ fun EditorScreen(
                         }
                         ToolButton("Zoom", Icons.Default.ZoomIn, state.activeTool == ToolMode.ZOOM) {
                             viewModel.setTool(ToolMode.ZOOM)
+                        }
+                        ToolButton("Grid", Icons.Default.GridOn, state.showGrid) {
+                            viewModel.toggleGrid()
+                        }
+                        ToolButton("Ruler", Icons.Default.Straighten, state.showRuler) {
+                            viewModel.toggleRuler()
                         }
                     }
                 }
@@ -608,23 +745,38 @@ fun EditorScreen(
                                 panOffset += pan
                             }
                         } else {
-                            detectTapGestures { offset ->
-                                val ax = (offset.x - artboardLeft) / effectiveScale
-                                val ay = (offset.y - artboardTop) / effectiveScale
-                                when (state.activeTool) {
-                                    ToolMode.SELECT -> viewModel.hitTestAndSelect(ax, ay)
-                                    ToolMode.ERASER -> viewModel.eraseAtArtboardPoint(ax, ay)
-                                    ToolMode.EYEDROPPER -> viewModel.sampleColorAtArtboard(ax, ay)
-                                    ToolMode.SHAPES -> viewModel.addShapeLayer(
-                                        state.activeShapeType,
-                                        x = ax - 150f,
-                                        y = ay - 150f,
-                                        width = 300f,
-                                        height = if (state.activeShapeType == ShapeType.LINE) 40f else 300f
-                                    )
-                                    else -> {}
+                            detectTapGestures(
+                                onTap = { offset ->
+                                    val ax = (offset.x - artboardLeft) / effectiveScale
+                                    val ay = (offset.y - artboardTop) / effectiveScale
+                                    when (state.activeTool) {
+                                        ToolMode.SELECT, ToolMode.DIRECT_SELECT -> {
+                                            viewModel.hitTestAndSelect(ax, ay)
+                                        }
+                                        ToolMode.PEN, ToolMode.CURVATURE -> {
+                                            penAnchorPoints = penAnchorPoints + PathPoint(ax, ay)
+                                        }
+                                        ToolMode.ERASER -> viewModel.eraseAtArtboardPoint(ax, ay)
+                                        ToolMode.EYEDROPPER -> viewModel.sampleColorAtArtboard(ax, ay)
+                                        ToolMode.SHAPES -> viewModel.addShapeLayer(
+                                            state.activeShapeType,
+                                            x = ax - 150f,
+                                            y = ay - 150f,
+                                            width = 300f,
+                                            height = if (state.activeShapeType == ShapeType.LINE) 40f else 300f
+                                        )
+                                        else -> {}
+                                    }
+                                },
+                                onLongPress = { offset ->
+                                    val ax = (offset.x - artboardLeft) / effectiveScale
+                                    val ay = (offset.y - artboardTop) / effectiveScale
+                                    val hit = viewModel.hitTestAndSelect(ax, ay)
+                                    if (hit != null) {
+                                        showLongPressMenu = true
+                                    }
                                 }
-                            }
+                            )
                         }
                     }
                     .pointerInput(
@@ -640,31 +792,68 @@ fun EditorScreen(
                                     val ax = (start.x - artboardLeft) / effectiveScale
                                     val ay = (start.y - artboardTop) / effectiveScale
                                     when (state.activeTool) {
-                                        ToolMode.PEN, ToolMode.BRUSH -> {
+                                        ToolMode.PEN, ToolMode.CURVATURE, ToolMode.BRUSH -> {
                                             activeStrokePoints = listOf(PathPoint(ax, ay))
                                         }
                                         ToolMode.SHAPES -> {
                                             activeShapeStart = PathPoint(ax, ay)
                                             activeShapeEnd = PathPoint(ax, ay)
                                         }
+                                        ToolMode.DIRECT_SELECT -> {
+                                            val sel = viewModel.selectedLayer()
+                                            if (sel is PathLayer && !sel.locked) {
+                                                val hitIdx = sel.points.indexOfFirst { pt ->
+                                                    val px = sel.x + pt.x
+                                                    val py = sel.y + pt.y
+                                                    abs(ax - px) < 48f / effectiveScale && abs(ay - py) < 48f / effectiveScale
+                                                }
+                                                if (hitIdx >= 0) {
+                                                    draggingMode = "ANCHOR"
+                                                    draggingAnchorIndex = hitIdx
+                                                    viewModel.beginTransformGesture()
+                                                } else {
+                                                    draggingMode = "NONE"
+                                                }
+                                            } else if (sel is ShapeLayer && !sel.locked) {
+                                                val converted = viewModel.convertSelectedShapeToEditablePath()
+                                                if (converted != null) {
+                                                    draggingMode = "ANCHOR"
+                                                    draggingAnchorIndex = 0
+                                                    viewModel.beginTransformGesture()
+                                                }
+                                            } else {
+                                                viewModel.hitTestAndSelect(ax, ay)
+                                                draggingMode = "NONE"
+                                            }
+                                        }
                                         ToolMode.SELECT -> {
                                             val sel = viewModel.selectedLayer()
                                             if (sel != null && !sel.locked) {
-                                                // Check bottom-right resize handle
+                                                val rotHandleX = sel.x + sel.width / 2f
+                                                val rotHandleY = sel.y - (52f / effectiveScale)
+                                                val hitRotate = abs(ax - rotHandleX) < 50f / effectiveScale &&
+                                                    abs(ay - rotHandleY) < 50f / effectiveScale
                                                 val handleX = sel.x + sel.width
                                                 val handleY = sel.y + sel.height
-                                                val hitHandle = abs(ax - handleX) < 54f / effectiveScale &&
+                                                val hitResize = abs(ax - handleX) < 54f / effectiveScale &&
                                                     abs(ay - handleY) < 54f / effectiveScale
-                                                if (hitHandle) {
-                                                    draggingMode = "RESIZE"
-                                                    viewModel.beginTransformGesture()
-                                                } else {
-                                                    val hit = viewModel.hitTestAndSelect(ax, ay)
-                                                    if (hit != null && !hit.locked) {
-                                                        draggingMode = "MOVE"
+                                                when {
+                                                    hitRotate -> {
+                                                        draggingMode = "ROTATE"
                                                         viewModel.beginTransformGesture()
-                                                    } else {
-                                                        draggingMode = "NONE"
+                                                    }
+                                                    hitResize -> {
+                                                        draggingMode = "RESIZE"
+                                                        viewModel.beginTransformGesture()
+                                                    }
+                                                    else -> {
+                                                        val hit = viewModel.hitTestAndSelect(ax, ay)
+                                                        if (hit != null && !hit.locked) {
+                                                            draggingMode = "MOVE"
+                                                            viewModel.beginTransformGesture()
+                                                        } else {
+                                                            draggingMode = "NONE"
+                                                        }
                                                     }
                                                 }
                                             } else {
@@ -686,7 +875,10 @@ fun EditorScreen(
                                     val ax = (change.position.x - artboardLeft) / effectiveScale
                                     val ay = (change.position.y - artboardTop) / effectiveScale
                                     when (state.activeTool) {
-                                        ToolMode.PEN, ToolMode.BRUSH -> {
+                                        ToolMode.HAND -> {
+                                            panOffset += dragAmount
+                                        }
+                                        ToolMode.PEN, ToolMode.CURVATURE, ToolMode.BRUSH -> {
                                             val last = activeStrokePoints.lastOrNull()
                                             val minStep = 3.5f / effectiveScale
                                             if (last == null || abs(ax - last.x) >= minStep || abs(ay - last.y) >= minStep) {
@@ -696,18 +888,31 @@ fun EditorScreen(
                                         ToolMode.SHAPES -> {
                                             activeShapeEnd = PathPoint(ax, ay)
                                         }
+                                        ToolMode.DIRECT_SELECT -> {
+                                            if (draggingMode == "ANCHOR" && draggingAnchorIndex >= 0) {
+                                                val selId = state.selectedLayerId
+                                                if (selId != null) {
+                                                    viewModel.updatePathAnchorPointLive(selId, draggingAnchorIndex, ax, ay)
+                                                }
+                                            }
+                                        }
                                         ToolMode.SELECT -> {
                                             val dx = dragAmount.x / effectiveScale
                                             val dy = dragAmount.y / effectiveScale
-                                            if (draggingMode == "MOVE") {
-                                                viewModel.updateSelectedTransformLive(dx = dx, dy = dy)
-                                            } else if (draggingMode == "RESIZE") {
-                                                val sel = viewModel.selectedLayer()
-                                                if (sel != null) {
+                                            val sel = viewModel.selectedLayer()
+                                            when (draggingMode) {
+                                                "MOVE" -> viewModel.updateSelectedTransformLive(dx = dx, dy = dy)
+                                                "RESIZE" -> if (sel != null) {
                                                     viewModel.updateSelectedTransformLive(
                                                         newWidth = sel.width + dx,
                                                         newHeight = sel.height + dy
                                                     )
+                                                }
+                                                "ROTATE" -> if (sel != null) {
+                                                    val cx = sel.x + sel.width / 2f
+                                                    val cy = sel.y + sel.height / 2f
+                                                    val deg = (atan2((ay - cy).toDouble(), (ax - cx).toDouble()) * 180.0 / PI).toFloat() + 90f
+                                                    viewModel.updateSelectedTransformLive(newRotation = deg)
                                                 }
                                             }
                                         }
@@ -717,12 +922,16 @@ fun EditorScreen(
                                 },
                                 onDragEnd = {
                                     when (state.activeTool) {
-                                        ToolMode.PEN -> {
-                                            viewModel.addPathLayer(activeStrokePoints, isPenTool = true)
+                                        ToolMode.PEN, ToolMode.CURVATURE -> {
+                                            if (activeStrokePoints.size >= 2) {
+                                                viewModel.addPathLayer(activeStrokePoints, isPenTool = true)
+                                            }
                                             activeStrokePoints = emptyList()
                                         }
                                         ToolMode.BRUSH -> {
-                                            viewModel.addPathLayer(activeStrokePoints, isPenTool = false)
+                                            if (activeStrokePoints.size >= 2) {
+                                                viewModel.addPathLayer(activeStrokePoints, isPenTool = false)
+                                            }
                                             activeStrokePoints = emptyList()
                                         }
                                         ToolMode.SHAPES -> {
@@ -738,9 +947,10 @@ fun EditorScreen(
                                             activeShapeStart = null
                                             activeShapeEnd = null
                                         }
-                                        ToolMode.SELECT -> {
+                                        ToolMode.SELECT, ToolMode.DIRECT_SELECT -> {
                                             viewModel.commitTransformGesture()
                                             draggingMode = "NONE"
+                                            draggingAnchorIndex = -1
                                         }
                                         else -> {}
                                     }
@@ -750,6 +960,7 @@ fun EditorScreen(
                                     activeShapeStart = null
                                     activeShapeEnd = null
                                     draggingMode = "NONE"
+                                    draggingAnchorIndex = -1
                                 }
                             )
                         }
@@ -759,7 +970,6 @@ fun EditorScreen(
                 val artW = doc.artboardWidth * effectiveScale
                 val artH = doc.artboardHeight * effectiveScale
 
-                // Checkerboard behind artboard when transparent preview is active
                 if (state.transparentPreview) {
                     val tile = 20f
                     var y = artboardTop
@@ -783,7 +993,6 @@ fun EditorScreen(
                     }
                 }
 
-                // Render Artboard via shared CanvasRenderer
                 drawIntoCanvas { canvas ->
                     val nc = canvas.nativeCanvas as AndroidCanvas
                     nc.save()
@@ -799,7 +1008,6 @@ fun EditorScreen(
                     nc.restore()
                 }
 
-                // Artboard Border
                 drawRect(
                     color = Color.White.copy(alpha = 0.25f),
                     topLeft = Offset(artboardLeft, artboardTop),
@@ -807,48 +1015,53 @@ fun EditorScreen(
                     style = Stroke(width = 2f)
                 )
 
-                // Grid Overlay
                 if (state.showGrid) {
                     val step = 80f * effectiveScale
                     if (step >= 8f) {
                         var gx = artboardLeft + step
                         while (gx < artboardLeft + artW) {
-                            drawLine(
-                                color = Color.Cyan.copy(alpha = 0.28f),
-                                start = Offset(gx, artboardTop),
-                                end = Offset(gx, artboardTop + artH),
-                                strokeWidth = 1f
-                            )
+                            drawLine(Color.Cyan.copy(alpha = 0.28f), Offset(gx, artboardTop), Offset(gx, artboardTop + artH), 1f)
                             gx += step
                         }
                         var gy = artboardTop + step
                         while (gy < artboardTop + artH) {
-                            drawLine(
-                                color = Color.Cyan.copy(alpha = 0.28f),
-                                start = Offset(artboardLeft, gy),
-                                end = Offset(artboardLeft + artW, gy),
-                                strokeWidth = 1f
-                            )
+                            drawLine(Color.Cyan.copy(alpha = 0.28f), Offset(artboardLeft, gy), Offset(artboardLeft + artW, gy), 1f)
                             gy += step
                         }
                     }
                 }
 
-                // Live Pen / Brush preview path
+                // Multi-point Pen / Curvature Anchor Preview
+                if (penAnchorPoints.isNotEmpty()) {
+                    if (penAnchorPoints.size >= 2) {
+                        val previewPath = Path().apply {
+                            moveTo(artboardLeft + penAnchorPoints[0].x * effectiveScale, artboardTop + penAnchorPoints[0].y * effectiveScale)
+                            for (i in 1 until penAnchorPoints.size) {
+                                lineTo(artboardLeft + penAnchorPoints[i].x * effectiveScale, artboardTop + penAnchorPoints[i].y * effectiveScale)
+                            }
+                        }
+                        drawPath(
+                            path = previewPath,
+                            color = Color(state.activeColor.toInt()),
+                            style = Stroke(width = state.penStrokeWidth * effectiveScale, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                        )
+                    }
+                    penAnchorPoints.forEach { pt ->
+                        val p = Offset(artboardLeft + pt.x * effectiveScale, artboardTop + pt.y * effectiveScale)
+                        drawCircle(color = Color.White, radius = 9f, center = p)
+                        drawCircle(color = OrangePrimary, radius = 9f, center = p, style = Stroke(3f))
+                    }
+                }
+
+                // Live drag Pen / Brush stroke preview
                 if (activeStrokePoints.size >= 2) {
                     val previewPath = Path().apply {
-                        moveTo(
-                            artboardLeft + activeStrokePoints[0].x * effectiveScale,
-                            artboardTop + activeStrokePoints[0].y * effectiveScale
-                        )
+                        moveTo(artboardLeft + activeStrokePoints[0].x * effectiveScale, artboardTop + activeStrokePoints[0].y * effectiveScale)
                         for (i in 1 until activeStrokePoints.size) {
-                            lineTo(
-                                artboardLeft + activeStrokePoints[i].x * effectiveScale,
-                                artboardTop + activeStrokePoints[i].y * effectiveScale
-                            )
+                            lineTo(artboardLeft + activeStrokePoints[i].x * effectiveScale, artboardTop + activeStrokePoints[i].y * effectiveScale)
                         }
                     }
-                    val strokeW = (if (state.activeTool == ToolMode.PEN) state.penStrokeWidth else state.brushSize) * effectiveScale
+                    val strokeW = (if (state.activeTool == ToolMode.BRUSH) state.brushSize else state.penStrokeWidth) * effectiveScale
                     drawPath(
                         path = previewPath,
                         color = Color(state.activeColor.toInt()),
@@ -856,51 +1069,48 @@ fun EditorScreen(
                     )
                 }
 
-                // Live Shape drag preview
                 if (activeShapeStart != null && activeShapeEnd != null) {
                     val sx = artboardLeft + min(activeShapeStart!!.x, activeShapeEnd!!.x) * effectiveScale
                     val sy = artboardTop + min(activeShapeStart!!.y, activeShapeEnd!!.y) * effectiveScale
                     val sw = abs(activeShapeEnd!!.x - activeShapeStart!!.x) * effectiveScale
                     val sh = abs(activeShapeEnd!!.y - activeShapeStart!!.y) * effectiveScale
-                    drawRect(
-                        color = OrangePrimary,
-                        topLeft = Offset(sx, sy),
-                        size = Size(sw, sh),
-                        style = Stroke(width = 3f)
-                    )
+                    drawRect(color = OrangePrimary, topLeft = Offset(sx, sy), size = Size(sw, sh), style = Stroke(3f))
                 }
 
-                // Selection Bounding Box & Corner Resize Handle
+                // Selection Box + Corner Resize + Rotation Handle + Direct-Select Anchor Points
                 if (selectedLayer != null && selectedLayer.visible) {
                     val bx = artboardLeft + selectedLayer.x * effectiveScale
                     val by = artboardTop + selectedLayer.y * effectiveScale
                     val bw = selectedLayer.width * effectiveScale
                     val bh = selectedLayer.height * effectiveScale
-                    drawRect(
-                        color = OrangePrimary,
-                        topLeft = Offset(bx, by),
-                        size = Size(bw, bh),
-                        style = Stroke(width = 3f)
-                    )
-                    // Corner handles
-                    val handleRadius = 11f
-                    listOf(
-                        Offset(bx, by),
-                        Offset(bx + bw, by),
-                        Offset(bx, by + bh),
-                        Offset(bx + bw, by + bh)
-                    ).forEachIndexed { idx, pt ->
-                        drawCircle(
-                            color = if (idx == 3) OrangePrimary else Color.White,
-                            radius = handleRadius,
-                            center = pt
-                        )
-                        drawCircle(
-                            color = if (idx == 3) Color.White else OrangePrimary,
-                            radius = handleRadius,
-                            center = pt,
-                            style = Stroke(width = 3f)
-                        )
+                    drawRect(color = OrangePrimary, topLeft = Offset(bx, by), size = Size(bw, bh), style = Stroke(3f))
+
+                    if (state.activeTool == ToolMode.DIRECT_SELECT && selectedLayer is PathLayer) {
+                        selectedLayer.points.forEach { pt ->
+                            val ap = Offset(
+                                artboardLeft + (selectedLayer.x + pt.x) * effectiveScale,
+                                artboardTop + (selectedLayer.y + pt.y) * effectiveScale
+                            )
+                            drawCircle(color = OrangePrimary, radius = 12f, center = ap)
+                            drawCircle(color = Color.White, radius = 12f, center = ap, style = Stroke(3f))
+                        }
+                    } else {
+                        // Top Rotation Handle stem & knob
+                        val rotTop = Offset(bx + bw / 2f, by - 52f)
+                        drawLine(OrangePrimary, Offset(bx + bw / 2f, by), rotTop, strokeWidth = 2.5f)
+                        drawCircle(color = OrangePrimary, radius = 11f, center = rotTop)
+                        drawCircle(color = Color.White, radius = 11f, center = rotTop, style = Stroke(2.5f))
+
+                        val handleRadius = 11f
+                        listOf(
+                            Offset(bx, by),
+                            Offset(bx + bw, by),
+                            Offset(bx, by + bh),
+                            Offset(bx + bw, by + bh)
+                        ).forEachIndexed { idx, pt ->
+                            drawCircle(color = if (idx == 3) OrangePrimary else Color.White, radius = handleRadius, center = pt)
+                            drawCircle(color = if (idx == 3) Color.White else OrangePrimary, radius = handleRadius, center = pt, style = Stroke(3f))
+                        }
                     }
                 }
 
@@ -929,6 +1139,93 @@ fun EditorScreen(
                 }
             }
 
+            // Collapsible Left Illustrator Drawing Toolbar
+            EditorLeftToolbar(
+                activeTool = state.activeTool,
+                activeShapeType = state.activeShapeType,
+                onSelectTool = { viewModel.setTool(it) },
+                onSelectShapeTool = { st -> viewModel.setShapeType(st) },
+                modifier = Modifier.align(Alignment.TopStart)
+            )
+
+            // Long-Press Context Menu for Selected Element (Copy, Duplicate, Delete, Bring Forward, Send Backward, Lock)
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 32.dp)
+            ) {
+                DropdownMenu(
+                    expanded = showLongPressMenu && selectedLayer != null,
+                    onDismissRequest = { showLongPressMenu = false },
+                    offset = DpOffset(0.dp, 8.dp)
+                ) {
+                    val sel = selectedLayer
+                    if (sel != null) {
+                        DropdownMenuItem(
+                            text = { Text("Copy • কপি") },
+                            leadingIcon = { Icon(Icons.Default.ContentCopy, contentDescription = null) },
+                            onClick = {
+                                showLongPressMenu = false
+                                viewModel.copySelected()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Duplicate • ডুপ্লিকেট") },
+                            leadingIcon = { Icon(Icons.Default.ControlPointDuplicate, contentDescription = null, tint = OrangePrimary) },
+                            onClick = {
+                                showLongPressMenu = false
+                                viewModel.duplicateSelected()
+                            }
+                        )
+                        if (state.clipboardLayer != null) {
+                            DropdownMenuItem(
+                                text = { Text("Paste • পেস্ট") },
+                                leadingIcon = { Icon(Icons.Default.ContentPaste, contentDescription = null) },
+                                onClick = {
+                                    showLongPressMenu = false
+                                    viewModel.pasteClipboard()
+                                }
+                            )
+                        }
+                        DropdownMenuItem(
+                            text = { Text("Bring Forward • সামনে আনুন") },
+                            leadingIcon = { Icon(Icons.Default.FlipToFront, contentDescription = null) },
+                            onClick = {
+                                showLongPressMenu = false
+                                viewModel.bringForward(sel.id)
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Send Backward • পিছনে পাঠান") },
+                            leadingIcon = { Icon(Icons.Default.FlipToBack, contentDescription = null) },
+                            onClick = {
+                                showLongPressMenu = false
+                                viewModel.sendBackward(sel.id)
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text(if (sel.locked) "Unlock • আনলক" else "Lock • লক") },
+                            leadingIcon = {
+                                Icon(if (sel.locked) Icons.Default.LockOpen else Icons.Default.Lock, contentDescription = null)
+                            },
+                            onClick = {
+                                showLongPressMenu = false
+                                viewModel.toggleLayerLock(sel.id)
+                            }
+                        )
+                        HorizontalDivider()
+                        DropdownMenuItem(
+                            text = { Text("Delete • ডিলিট", color = ErrorRed) },
+                            leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = ErrorRed) },
+                            onClick = {
+                                showLongPressMenu = false
+                                viewModel.deleteLayer(sel.id)
+                            }
+                        )
+                    }
+                }
+            }
+
             // Right-Side Slide-Out Layers Panel
             AnimatedVisibility(
                 visible = state.layersPanelOpen,
@@ -944,6 +1241,7 @@ fun EditorScreen(
                     onToggleLock = { viewModel.toggleLayerLock(it) },
                     onBringForward = { viewModel.bringForward(it) },
                     onSendBackward = { viewModel.sendBackward(it) },
+                    onReorderLayer = { from, to -> viewModel.reorderLayer(from, to) },
                     onRenameLayer = { id, name -> viewModel.renameLayer(id, name) },
                     onDeleteLayer = { viewModel.deleteLayer(it) },
                     onClose = { viewModel.setLayersPanelOpen(false) }
@@ -1009,15 +1307,15 @@ private fun ToolButton(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
         modifier = Modifier
-            .widthIn(min = 54.dp)
-            .heightIn(min = 50.dp)
+            .widthIn(min = 52.dp)
+            .heightIn(min = 48.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(if (selected) OrangePrimary.copy(alpha = 0.16f) else Color.Transparent)
             .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .padding(horizontal = 7.dp, vertical = 4.dp)
             .testTag("tool_btn_${label.lowercase()}")
     ) {
-        Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(22.dp))
+        Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(20.dp))
         Spacer(modifier = Modifier.height(2.dp))
         Text(
             text = label,

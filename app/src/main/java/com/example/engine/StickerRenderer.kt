@@ -566,6 +566,35 @@ object StickerRenderer {
                 canvas.drawLine(cx, h * 0.1f, cx, h * 0.9f, secStrokePaint)
             }
 
+            StickerRenderKind.SOC_FACEBOOK -> {
+                canvas.drawCircle(cx, cy, minDim * 0.45f, fillPaint)
+                drawCenteredCalligraphyText(context, canvas, "f", w, h, secondaryColor, alpha, 0.56f)
+            }
+
+            StickerRenderKind.SOC_WHATSAPP -> {
+                canvas.drawCircle(cx, cy, minDim * 0.44f, fillPaint)
+                val tail = Path().apply {
+                    moveTo(w * 0.16f, h * 0.72f)
+                    lineTo(w * 0.08f, h * 0.92f)
+                    lineTo(w * 0.34f, h * 0.84f)
+                    close()
+                }
+                canvas.drawPath(tail, fillPaint)
+                secStrokePaint.strokeWidth = minDim * 0.055f
+                canvas.drawCircle(cx, cy, minDim * 0.25f, secStrokePaint)
+                drawCenteredCalligraphyText(context, canvas, "✆", w, h, secondaryColor, alpha, 0.32f)
+            }
+
+            StickerRenderKind.SOC_INSTAGRAM -> {
+                val rect = RectF(w * 0.1f, h * 0.1f, w * 0.9f, h * 0.9f)
+                canvas.drawRoundRect(rect, minDim * 0.24f, minDim * 0.24f, fillPaint)
+                secStrokePaint.strokeWidth = minDim * 0.06f
+                canvas.drawRoundRect(RectF(w * 0.22f, h * 0.22f, w * 0.78f, h * 0.78f), minDim * 0.14f, minDim * 0.14f, secStrokePaint)
+                canvas.drawCircle(cx, cy, minDim * 0.14f, secStrokePaint)
+                canvas.drawCircle(w * 0.68f, h * 0.32f, minDim * 0.04f, secFillPaint)
+            }
+
+            StickerRenderKind.SOC_YOUTUBE,
             StickerRenderKind.SOC_PLAY_BUTTON -> {
                 canvas.drawRoundRect(
                     RectF(w * 0.08f, h * 0.2f, w * 0.92f, h * 0.8f),
@@ -578,6 +607,74 @@ object StickerRenderer {
                     close()
                 }
                 canvas.drawPath(tri, secFillPaint)
+            }
+
+            StickerRenderKind.LINE_SOLID_ORNATE -> {
+                strokePaint.strokeWidth = max(3f, minDim * 0.045f)
+                canvas.drawLine(w * 0.04f, cy, w * 0.96f, cy, strokePaint)
+                val dia = Path().apply {
+                    moveTo(cx, cy - minDim * 0.12f)
+                    lineTo(cx + minDim * 0.12f, cy)
+                    lineTo(cx, cy + minDim * 0.12f)
+                    lineTo(cx - minDim * 0.12f, cy)
+                    close()
+                }
+                canvas.drawPath(dia, fillPaint)
+                canvas.drawCircle(w * 0.06f, cy, minDim * 0.05f, fillPaint)
+                canvas.drawCircle(w * 0.94f, cy, minDim * 0.05f, fillPaint)
+            }
+
+            StickerRenderKind.LINE_DASHED_RULE -> {
+                val dashPaint = Paint(strokePaint).apply {
+                    strokeWidth = max(3f, minDim * 0.05f)
+                    pathEffect = DashPathEffect(floatArrayOf(minDim * 0.08f, minDim * 0.05f), 0f)
+                }
+                canvas.drawLine(w * 0.04f, cy, w * 0.96f, cy, dashPaint)
+            }
+
+            StickerRenderKind.LINE_DOUBLE_BAR -> {
+                strokePaint.strokeWidth = max(2f, minDim * 0.04f)
+                secStrokePaint.strokeWidth = max(2f, minDim * 0.025f)
+                canvas.drawLine(w * 0.04f, cy - minDim * 0.06f, w * 0.96f, cy - minDim * 0.06f, strokePaint)
+                canvas.drawLine(w * 0.08f, cy + minDim * 0.06f, w * 0.92f, cy + minDim * 0.06f, secStrokePaint)
+            }
+
+            StickerRenderKind.LINE_DIAMOND_DIVIDER -> {
+                strokePaint.strokeWidth = max(2f, minDim * 0.03f)
+                canvas.drawLine(w * 0.06f, cy, w * 0.4f, cy, strokePaint)
+                canvas.drawLine(w * 0.6f, cy, w * 0.94f, cy, strokePaint)
+                drawStarPolygon(canvas, cx, cy, minDim * 0.14f, minDim * 0.06f, 4, fillPaint)
+            }
+
+            StickerRenderKind.ICON_CLOCK -> {
+                strokePaint.strokeWidth = minDim * 0.07f
+                canvas.drawCircle(cx, cy, minDim * 0.4f, strokePaint)
+                canvas.drawLine(cx, cy, cx, cy - minDim * 0.22f, strokePaint)
+                canvas.drawLine(cx, cy, cx + minDim * 0.18f, cy + minDim * 0.08f, strokePaint)
+            }
+
+            StickerRenderKind.ICON_CALENDAR -> {
+                canvas.drawRoundRect(RectF(w * 0.12f, h * 0.18f, w * 0.88f, h * 0.88f), minDim * 0.1f, minDim * 0.1f, fillPaint)
+                canvas.drawRect(w * 0.12f, h * 0.36f, w * 0.88f, h * 0.88f, secFillPaint)
+                canvas.drawRect(w * 0.28f, h * 0.1f, w * 0.36f, h * 0.24f, secFillPaint)
+                canvas.drawRect(w * 0.64f, h * 0.1f, w * 0.72f, h * 0.24f, secFillPaint)
+                drawCenteredCalligraphyText(context, canvas, "31", w, h * 1.15f, primaryColor, alpha, 0.28f)
+            }
+
+            StickerRenderKind.ICON_STAR -> {
+                drawStarPolygon(canvas, cx, cy, minDim * 0.45f, minDim * 0.2f, 5, fillPaint)
+            }
+
+            StickerRenderKind.ICON_MAIL -> {
+                val r = RectF(w * 0.1f, h * 0.22f, w * 0.9f, h * 0.78f)
+                canvas.drawRoundRect(r, minDim * 0.08f, minDim * 0.08f, fillPaint)
+                secStrokePaint.strokeWidth = minDim * 0.05f
+                val env = Path().apply {
+                    moveTo(w * 0.14f, h * 0.26f)
+                    lineTo(cx, cy + minDim * 0.05f)
+                    lineTo(w * 0.86f, h * 0.26f)
+                }
+                canvas.drawPath(env, secStrokePaint)
             }
 
             StickerRenderKind.SOC_HEART_LIKE,
