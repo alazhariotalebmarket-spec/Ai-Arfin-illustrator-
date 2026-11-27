@@ -1,0 +1,6 @@
+{
+  "name": "Arfin Illustrator",
+  "description": "AI - Arfin Illustrator: Professional mobile vector & graphic design studio with Bangla + English typography, Pen & Brush tools, Layers, Islamic & poster templates, offline auto-save, background remover, and 4K/8K Ultra HD export.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

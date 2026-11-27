@@ -1,0 +1,17 @@
+<resources>
+    <string name="app_name">Arfin Illustrator</string>
+    <string name="brand_short">Ai</string>
+    <string name="brand_full">Arfin Illustrator</string>
+    <string name="greeting_prefix">Hello</string>
+    <string name="create_new_design">Create New Design</string>
+    <string name="create_new_design_bn">নতুন ডিজাইন তৈরি করুন</string>
+    <string name="search_hint">Search projects, templates... (খুঁজুন)</string>
+    <string name="nav_home">Home</string>
+    <string name="nav_new">New Design</string>
+    <string name="nav_projects">My Projects</string>
+    <string name="nav_templates">Templates</string>
+    <string name="nav_settings">Settings</string>
+    <string name="recent_projects">Recent Projects • সাম্প্রতিক</string>
+    <string name="ready_templates">Templates • রেডি টেমপ্লেট</string>
+    <string name="export_design">Export</string>
+</resources>
